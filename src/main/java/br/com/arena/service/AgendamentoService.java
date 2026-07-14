@@ -14,6 +14,7 @@ import br.com.arena.security.SecurityUtils;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -56,6 +57,9 @@ public class AgendamentoService {
     }
 
     public AgendamentoResponseDTO salvar(AgendamentoRequestDTO dto) {
+
+        validarHorarios(dto);
+        validarDataFutura(dto);
 
         Usuario usuarioLogado = SecurityUtils.getUsuarioLogado();
 
@@ -102,6 +106,9 @@ public class AgendamentoService {
 
     public AgendamentoResponseDTO atualizar(Long id, AgendamentoRequestDTO dto) {
 
+        validarHorarios(dto);
+        validarDataFutura(dto);
+
         Agendamento agendamento = buscarEntidadePorId(id);
         validarPermissao(agendamento);
 
@@ -125,6 +132,22 @@ public class AgendamentoService {
         validarPermissao(agendamento);
 
         agendamentoRepository.delete(agendamento);
+    }
+
+    private void validarHorarios(AgendamentoRequestDTO dto) {
+
+        if (!dto.getHoraFim().isAfter(dto.getHoraInicio())) {
+            throw new BusinessException("O horário de término deve ser depois do horário de início.");
+        }
+    }
+
+    private void validarDataFutura(AgendamentoRequestDTO dto) {
+
+        LocalDateTime inicioAgendamento = LocalDateTime.of(dto.getData(), dto.getHoraInicio());
+
+        if (inicioAgendamento.isBefore(LocalDateTime.now())) {
+            throw new BusinessException("Não é possível agendar em uma data/horário que já passou.");
+        }
     }
 
     private void validarPermissao(Agendamento agendamento) {

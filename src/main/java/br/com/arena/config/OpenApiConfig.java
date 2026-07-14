@@ -41,7 +41,7 @@ public class OpenApiConfig {
                                 .description("Projeto da disciplina de Padrões de Projetos")
                 )
 
-                // Aqui você adiciona o esquema de segurança
+
                 .addSecurityItem(new SecurityRequirement().addList("bearerAuth"))
                 .components(
                         new io.swagger.v3.oas.models.Components()
