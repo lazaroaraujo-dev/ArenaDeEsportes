@@ -1,5 +1,8 @@
-package br.com.arena.auth;
+package br.com.arena.controller;
 
+import br.com.arena.auth.AuthService;
+import br.com.arena.auth.LoginRequestDTO;
+import br.com.arena.auth.LoginResponseDTO;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
