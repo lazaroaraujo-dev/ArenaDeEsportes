@@ -5,6 +5,7 @@ import br.com.arena.dto.agendamento.AgendamentoResponseDTO;
 import br.com.arena.service.AgendamentoService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -19,6 +20,7 @@ public class AgendamentoController {
         this.agendamentoService = agendamentoService;
     }
 
+    @PreAuthorize("hasRole('ADMIN')")
     @GetMapping
     public List<AgendamentoResponseDTO> listarTodos() {
         return agendamentoService.listarTodos();

@@ -10,6 +10,8 @@ import br.com.arena.model.Agendamento;
 import br.com.arena.model.Quadra;
 import br.com.arena.model.Usuario;
 import br.com.arena.repository.AgendamentoRepository;
+import br.com.arena.security.SecurityUtils;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -40,7 +42,10 @@ public class AgendamentoService {
 
     public AgendamentoResponseDTO buscarPorId(Long id) {
 
-        return AgendamentoMapper.toDTO(buscarEntidadePorId(id));
+        Agendamento agendamento = buscarEntidadePorId(id);
+        validarPermissao(agendamento);
+
+        return AgendamentoMapper.toDTO(agendamento);
     }
 
     public Agendamento buscarEntidadePorId(Long id) {
@@ -52,12 +57,19 @@ public class AgendamentoService {
 
     public AgendamentoResponseDTO salvar(AgendamentoRequestDTO dto) {
 
-        Usuario usuario = usuarioService.buscarEntidadePorId(dto.getUsuarioId());
+        Usuario usuarioLogado = SecurityUtils.getUsuarioLogado();
+
+        Long usuarioIdFinal = SecurityUtils.isAdmin()
+                ? dto.getUsuarioId()
+                : usuarioLogado.getId();
+
+        Usuario usuario = usuarioService.buscarEntidadePorId(usuarioIdFinal);
         Quadra quadra = quadraService.buscarEntidadePorId(dto.getQuadraId());
 
         if (!quadra.isAtiva()) {
             throw new BusinessException("A quadra está inativa.");
         }
+
         List<Agendamento> agendamentos =
                 agendamentoRepository.findByQuadraAndData(
                         quadra,
@@ -76,6 +88,7 @@ public class AgendamentoService {
                 );
             }
         }
+
         Agendamento agendamento = AgendamentoMapper.toEntity(dto);
 
         agendamento.setUsuario(usuario);
@@ -90,6 +103,7 @@ public class AgendamentoService {
     public AgendamentoResponseDTO atualizar(Long id, AgendamentoRequestDTO dto) {
 
         Agendamento agendamento = buscarEntidadePorId(id);
+        validarPermissao(agendamento);
 
         Usuario usuario = usuarioService.buscarEntidadePorId(dto.getUsuarioId());
         Quadra quadra = quadraService.buscarEntidadePorId(dto.getQuadraId());
@@ -107,7 +121,25 @@ public class AgendamentoService {
 
     public void deletar(Long id) {
 
-        agendamentoRepository.delete(buscarEntidadePorId(id));
+        Agendamento agendamento = buscarEntidadePorId(id);
+        validarPermissao(agendamento);
+
+        agendamentoRepository.delete(agendamento);
+    }
+
+    private void validarPermissao(Agendamento agendamento) {
+
+        Usuario usuarioLogado = SecurityUtils.getUsuarioLogado();
+
+        boolean isDono = agendamento.getUsuario()
+                .getId()
+                .equals(usuarioLogado.getId());
+
+        if (!isDono && !SecurityUtils.isAdmin()) {
+            throw new AccessDeniedException(
+                    "Você não tem permissão para acessar este agendamento."
+            );
+        }
     }
 
 }
