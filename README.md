@@ -1,41 +1,47 @@
-# 🏟️ Arena API
+# 🏟 ArenaDeEsportes
 
-API REST desenvolvida em **Java** com **Spring Boot** para gerenciamento de uma arena esportiva, permitindo o cadastro de usuários, gerenciamento de quadras e realização de agendamentos.
+API REST desenvolvida em **Java 21** utilizando **Spring Boot**, com o objetivo de gerenciar uma arena esportiva. O sistema permite o cadastro de usuários, gerenciamento de quadras e realização de agendamentos, contando com autenticação baseada em **JWT** e persistência de dados em **PostgreSQL**.
 
-O projeto foi desenvolvido seguindo boas práticas de arquitetura em camadas, facilitando a manutenção, escalabilidade e organização do código.
+O projeto foi desenvolvido como atividade acadêmica para aplicação dos conceitos de desenvolvimento de APIs REST, arquitetura em camadas, autenticação e banco de dados.
+
+---
+
+# 🚀 Tecnologias Utilizadas
+
+- Java 21
+- Spring Boot
+- Spring Web
+- Spring Data JPA
+- Spring Security
+- JWT (JSON Web Token)
+- PostgreSQL
+- Hibernate
+- Maven
 
 ---
 
 # 📌 Funcionalidades
 
-* Cadastro de usuários
-* Autenticação utilizando JWT
-* Controle de perfis de usuário
-* Cadastro de quadras
-* Ativação e desativação de quadras
-* Agendamento de horários
-* Cancelamento de agendamentos
-* Consulta de usuários
-* Consulta de quadras
-* Consulta de agendamentos
-* Validação de regras de negócio
-* Persistência de dados utilizando PostgreSQL
+## Usuários
 
----
+- Cadastro de usuários
+- Login com autenticação JWT
+- Diferentes perfis de acesso
 
-# 🛠 Tecnologias Utilizadas
+## Quadras
 
-* Java 21
-* Spring Boot
-* Spring Web
-* Spring Data JPA
-* Spring Security
-* JWT (JSON Web Token)
-* PostgreSQL
-* Maven
-* Lombok
-* Hibernate
-* Jakarta Validation
+- Cadastro de quadras
+- Consulta de quadras
+- Ativação e desativação de quadras
+- Diferentes tipos de quadras
+
+## Agendamentos
+
+- Cadastro de agendamentos
+- Consulta de agendamentos
+- Cancelamento de reservas
+- Validação para impedir agendamentos em datas passadas
+- Validação para evitar conflitos de horários
 
 ---
 
@@ -43,39 +49,45 @@ O projeto foi desenvolvido seguindo boas práticas de arquitetura em camadas, fa
 
 ```
 src
-└── main
+├── main
+│   └── java
+│       └── br
+│           └── com
+│               └── arena
+│                   ├── auth
+│                   ├── config
+│                   ├── controller
+│                   ├── dto
+│                   ├── exception
+│                   ├── mapper
+│                   ├── model
+│                   ├── repository
+│                   ├── security
+│                   ├── service
+│                   └── ArenaApplication.java
+│
+└── test
     └── java
-        └── br.com.arena
-            ├── auth
-            ├── config
-            ├── controller
-            ├── dto
-            ├── exception
-            ├── mapper
-            ├── model
-            ├── repository
-            ├── security
-            ├── service
-            └── ArenaApplication.java
+        └── br
+            └── com
+                └── arena
 ```
 
 ---
 
 # 🗄 Modelo de Dados
 
-O sistema possui três entidades principais:
-
 ## 👤 Usuário
 
-Responsável por acessar o sistema.
+Representa os usuários do sistema.
 
-Informações:
+Campos principais:
 
-* id
-* nome
-* email
-* senha
-* perfil
+- id
+- nome
+- email
+- senha
+- perfil
 
 ---
 
@@ -83,41 +95,43 @@ Informações:
 
 Representa uma quadra disponível para reserva.
 
-Informações:
+Campos principais:
 
-* id
-* nome
-* tipo da quadra
-* ativa
+- id
+- nome
+- tipo
+- ativa
 
 Tipos disponíveis:
 
-* Futvôlei
-* Beach Tennis
-* Vôlei de Areia
+- Futvôlei
+- Beach Tennis
+- Vôlei de Areia
 
 ---
 
 ## 📅 Agendamento
 
-Relaciona um usuário a uma quadra em uma data e horário.
+Relaciona um usuário a uma quadra em determinada data e horário.
 
-Informações:
+Campos principais:
 
-* id
-* usuário
-* quadra
-* data
-* horário
-* status
+- id
+- usuário
+- quadra
+- data
+- horário
+- status
 
 ---
 
-# 🔐 Segurança
+# 🔐 Autenticação
 
 A API utiliza autenticação baseada em **JWT**.
 
-Após realizar o login, o usuário recebe um token que deverá ser enviado nas requisições protegidas através do cabeçalho:
+Após realizar o login, o sistema retorna um token que deve ser enviado nas requisições protegidas.
+
+Exemplo:
 
 ```
 Authorization: Bearer SEU_TOKEN
@@ -125,7 +139,7 @@ Authorization: Bearer SEU_TOKEN
 
 ---
 
-# ⚙️ Configuração
+# ⚙ Configuração
 
 Configure o arquivo:
 
@@ -146,30 +160,38 @@ spring.jpa.show-sql=true
 
 ---
 
-# ▶️ Executando o Projeto
+# ▶ Como executar
 
-Clone o repositório:
-
-```bash
-git clone https://github.com/lazaroaraujo-dev/arena-api.git
-```
-
-Entre na pasta:
+Clone o repositório
 
 ```bash
-cd arena-api
+git clone https://github.com/lazaroaraujo-dev/ArenaDeEsportes.git
 ```
 
-Execute:
+Entre na pasta
+
+```bash
+cd ArenaDeEsportes
+```
+
+Execute a aplicação
+
+Linux/macOS
 
 ```bash
 ./mvnw spring-boot:run
 ```
 
-ou
+Windows
 
 ```bash
 mvn spring-boot:run
+```
+
+ou
+
+```bash
+.\mvnw.cmd spring-boot:run
 ```
 
 A aplicação ficará disponível em:
@@ -180,39 +202,43 @@ http://localhost:8080
 
 ---
 
-# 📖 Arquitetura
+# 🏛 Arquitetura
 
-O projeto utiliza arquitetura em camadas:
+O projeto segue uma arquitetura em camadas.
 
-* **Controller** → Recebe as requisições HTTP.
-* **Service** → Implementa as regras de negócio.
-* **Repository** → Responsável pelo acesso ao banco de dados.
-* **Model** → Representa as entidades do sistema.
-* **DTO** → Transferência de dados.
-* **Mapper** → Conversão entre entidades e DTOs.
-* **Security** → Configuração da autenticação e autorização.
+- **Controller** → Recebe as requisições HTTP.
+- **Service** → Contém as regras de negócio.
+- **Repository** → Responsável pelo acesso ao banco de dados.
+- **Model** → Representa as entidades da aplicação.
+- **DTO** → Objetos utilizados para transferência de dados.
+- **Mapper** → Conversão entre entidades e DTOs.
+- **Security** → Configuração da autenticação e autorização.
 
 ---
 
-# 🚀 Melhorias Futuras
+# 📈 Melhorias Futuras
 
-* Paginação nas consultas
-* Upload de imagens das quadras
-* Histórico de reservas
-* Notificações por e-mail
-* Dashboard administrativo
-* Documentação automática com Swagger/OpenAPI
-* Testes unitários e de integração
+- Testes unitários
+- Testes de integração
+- Documentação com Swagger/OpenAPI
+- Paginação das consultas
+- Upload de imagens das quadras
+- Histórico de reservas
+- Notificações por e-mail
 
 ---
 
 # 👨‍💻 Autor
 
-Projeto desenvolvido como atividade acadêmica para estudo de:
+**Lázaro Araújo**
 
-* Java
-* Spring Boot
-* APIs REST
-* Segurança com JWT
-* Persistência de Dados com PostgreSQL
-* Arquitetura em Camadas
+Projeto desenvolvido para fins acadêmicos, aplicando conceitos de:
+
+- Java
+- Spring Boot
+- APIs REST
+- Spring Security
+- JWT
+- PostgreSQL
+- Arquitetura em Camadas
+- Boas práticas de desenvolvimento
