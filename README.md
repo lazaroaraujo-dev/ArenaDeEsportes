@@ -151,7 +151,7 @@ spring.jpa.show-sql=true
 Clone o repositório:
 
 ```bash
-git clone https://github.com/seu-usuario/arena-api.git
+git clone https://github.com/lazaroaraujo-dev/arena-api.git
 ```
 
 Entre na pasta:
