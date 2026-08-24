@@ -127,6 +127,7 @@ A API estará acessível em: `http://localhost:8080`
 ## 👨‍💻 Autor
 
 **Lázaro Araújo** 
+
 <a href="https://www.linkedin.com/in/lazaro-juan-de-lima-araujo">
   <img src="https://img.shields.io/badge/LinkedIn-0077B5?style=flat-square&logo=linkedin&logoColor=white" alt="LinkedIn do Lázaro">
 </a>
