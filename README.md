@@ -126,6 +126,10 @@ A API estará acessível em: `http://localhost:8080`
 
 ## 👨‍💻 Autor
 
-**Lázaro Araújo**  
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-0077B5?style=flat-square&logo=linkedin&logoColor=white)]([https://www.linkedin.com/in/lazaro-juan-de-lima-araujo](https://www.linkedin.com/in/lazaro-juan-de-lima-araujo))
-[![GitHub](https://img.shields.io/badge/GitHub-100000?style=flat-square&logo=github&logoColor=white)](https://github.com/lazaroaraujo-dev)
+**Lázaro Araújo** 
+<a href="https://www.linkedin.com/in/lazaro-juan-de-lima-araujo">
+  <img src="https://img.shields.io/badge/LinkedIn-0077B5?style=flat-square&logo=linkedin&logoColor=white" alt="LinkedIn do Lázaro">
+</a>
+<a href="https://github.com/lazaroaraujo-dev">
+  <img src="https://img.shields.io/badge/GitHub-100000?style=flat-square&logo=github&logoColor=white" alt="GitHub do Lázaro">
+</a>
