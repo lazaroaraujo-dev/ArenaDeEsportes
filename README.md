@@ -67,3 +67,65 @@ src/main/java/br/com/arena/
 ├── repository/     # Interfaces de acesso a dados (Spring Data JPA)
 ├── security/       # Filtros JWT, SecurityFilterChain e UserDetails
 └── service/        # Regras de negócio e validações
+```
+
+---
+
+## ⚙️ Pré-requisitos e Execução
+
+### Pré-requisitos
+* **Java 21** instalado
+* **PostgreSQL** rodando localmente (ou via Docker)
+* **Git**
+
+### Configuração do Banco de Dados
+Edite o arquivo `src/main/resources/application.properties`:
+
+```properties
+spring.datasource.url=jdbc:postgresql://localhost:5432/arena
+spring.datasource.username=seu_usuario
+spring.datasource.password=sua_senha
+
+spring.jpa.hibernate.ddl-auto=update
+spring.jpa.show-sql=false
+```
+
+### Rodando o Projeto
+
+```bash
+# 1. Clone o repositório
+git clone https://github.com/lazaroaraujo-dev/ArenaDeEsportes.git
+
+# 2. Acesse a pasta do projeto
+cd ArenaDeEsportes
+
+# 3. Execute a aplicação (Linux/macOS)
+./mvnw spring-boot:run
+
+# Ou no Windows
+.\mvnw.cmd spring-boot:run
+```
+
+A API estará acessível em: `http://localhost:8080`
+
+---
+
+## 🚀 Roadmap de Desenvolvimento
+
+- [x] Autenticação e autorização via JWT
+- [x] CRUD completo de Quadras e Agendamentos
+- [x] Validação de regras de negócio (conflitos de horário e datas passadas)
+- [x] Tratamento global de exceções
+- [ ] Documentação interativa via **Swagger/OpenAPI (em andamento)**
+- [ ] Implementação de testes unitários e de integração com **JUnit 5 & Mockito**
+- [ ] Paginação e ordenação de consultas (`Pageable`)
+- [ ] Envio automático de confirmação de agendamento por e-mail
+- [ ] Conteinerização da aplicação com **Docker & Docker Compose**
+
+---
+
+## 👨‍💻 Autor
+
+**Lázaro Araújo**  
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-0077B5?style=flat-square&logo=linkedin&logoColor=white)]([https://www.linkedin.com/in/lazaro-juan-de-lima-araujo](https://www.linkedin.com/in/lazaro-juan-de-lima-araujo))
+[![GitHub](https://img.shields.io/badge/GitHub-100000?style=flat-square&logo=github&logoColor=white)](https://github.com/lazaroaraujo-dev)
