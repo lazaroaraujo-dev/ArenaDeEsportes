@@ -1,244 +1,69 @@
-# 🏟 ArenaDeEsportes
+# 🏟️ ArenaDeEsportes API
 
-API REST desenvolvida em **Java 21** utilizando **Spring Boot**, com o objetivo de gerenciar uma arena esportiva. O sistema permite o cadastro de usuários, gerenciamento de quadras e realização de agendamentos, contando com autenticação baseada em **JWT** e persistência de dados em **PostgreSQL**.
+> API RESTful para gerenciamento completo de arenas esportivas, controle de quadras de areia e sistema de agendamento em tempo real com prevenção de conflitos.
 
-O projeto foi desenvolvido como atividade acadêmica para aplicação dos conceitos de desenvolvimento de APIs REST, arquitetura em camadas, autenticação e banco de dados.
-
----
-
-# 🚀 Tecnologias Utilizadas
-
-- Java 21
-- Spring Boot
-- Spring Web
-- Spring Data JPA
-- Spring Security
-- JWT (JSON Web Token)
-- PostgreSQL
-- Hibernate
-- Maven
+![Java](https://img.shields.io/badge/Java-21-orange?style=flat-square&logo=openjdk)
+![Spring Boot](https://img.shields.io/badge/Spring_Boot-3.x-brightgreen?style=flat-square&logo=spring-boot)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-blue?style=flat-square&logo=postgresql)
+![Spring Security](https://img.shields.io/badge/Security-JWT-red?style=flat-square&logo=springsecurity)
+![Status](https://img.shields.io/badge/Status-Em_Desenvolvimento_(MVP_Ativo)-yellow?style=flat-square)
 
 ---
 
-# 📌 Funcionalidades
+## 💻 Sobre o Projeto
 
-## Usuários
+O **ArenaDeEsportes** é uma solução de backend desenvolvida para automatizar a operação de centros esportivos (Beach Tennis, Futvôlei e Vôlei de Areia). 
 
-- Cadastro de usuários
-- Login com autenticação JWT
-- Diferentes perfis de acesso
-
-## Quadras
-
-- Cadastro de quadras
-- Consulta de quadras
-- Ativação e desativação de quadras
-- Diferentes tipos de quadras
-
-## Agendamentos
-
-- Cadastro de agendamentos
-- Consulta de agendamentos
-- Cancelamento de reservas
-- Validação para impedir agendamentos em datas passadas
-- Validação para evitar conflitos de horários
+A API resolve o problema clássico de *overbooking* (duplicidade de horários), valida datas no passado e gerencia permissões de acesso baseadas em papéis (*Role-Based Access Control*) com **Spring Security** e **JWT**.
 
 ---
 
-# 📂 Estrutura do Projeto
+## 🛠️ Tecnologias e Ferramentas
 
-```
-src
-├── main
-│   └── java
-│       └── br
-│           └── com
-│               └── arena
-│                   ├── auth
-│                   ├── config
-│                   ├── controller
-│                   ├── dto
-│                   ├── exception
-│                   ├── mapper
-│                   ├── model
-│                   ├── repository
-│                   ├── security
-│                   ├── service
-│                   └── ArenaApplication.java
-│
-└── test
-    └── java
-        └── br
-            └── com
-                └── arena
-```
+* **Linguagem:** Java 21 (LTS)
+* **Framework:** Spring Boot (Spring Web, Spring Data JPA, Spring Validation)
+* **Segurança:** Spring Security 6 + Auth0 Java JWT
+* **Banco de Dados:** PostgreSQL & Hibernate ORM
+* **Mapeamento & DTOs:** ModelMapper / MapStruct
+* **Gerenciador de Dependências:** Apache Maven
 
 ---
 
-# 🗄 Modelo de Dados
+## 📌 Principais Recursos
 
-## 👤 Usuário
-
-Representa os usuários do sistema.
-
-Campos principais:
-
-- id
-- nome
-- email
-- senha
-- perfil
+* **Segurança e RBAC:** Autenticação stateless via token JWT com diferenciação entre usuários comuns e administradores.
+* **Gestão de Quadras:** Controle de disponibilidade, tipos de piso/esporte e ativação/desativação lógica.
+* **Motor de Agendamento:** Validação inteligente que impede reservas com horários retroativos ou sobrepostos para a mesma quadra.
+* **Tratamento Global de Erros:** Respostas padronizadas via `@ControllerAdvice` para validações e exceções de negócio.
 
 ---
 
-## 🏟 Quadra
+## 🛣️ Endpoints Principais (Visão Geral)
 
-Representa uma quadra disponível para reserva.
-
-Campos principais:
-
-- id
-- nome
-- tipo
-- ativa
-
-Tipos disponíveis:
-
-- Futvôlei
-- Beach Tennis
-- Vôlei de Areia
+| Método | Endpoint | Descrição | Acesso |
+| :--- | :--- | :--- | :--- |
+| `POST` | `/auth/register` | Registro de novos usuários | Público |
+| `POST` | `/auth/login` | Autenticação e geração do token JWT | Público |
+| `GET` | `/quadras` | Lista todas as quadras ativas | Autenticado |
+| `POST` | `/quadras` | Cadastro de nova quadra | ADMIN |
+| `POST` | `/agendamentos` | Reserva de quadra com validação de conflito | Autenticado |
+| `DELETE` | `/agendamentos/{id}` | Cancelamento de agendamento existente | Autenticado |
 
 ---
 
-## 📅 Agendamento
+## 📂 Arquitetura do Sistema
 
-Relaciona um usuário a uma quadra em determinada data e horário.
+A API segue os padrões da **Arquitetura em Camadas** (*Layered Architecture*), priorizando desacoplamento e isolamento de regras de negócio:
 
-Campos principais:
-
-- id
-- usuário
-- quadra
-- data
-- horário
-- status
-
----
-
-# 🔐 Autenticação
-
-A API utiliza autenticação baseada em **JWT**.
-
-Após realizar o login, o sistema retorna um token que deve ser enviado nas requisições protegidas.
-
-Exemplo:
-
-```
-Authorization: Bearer SEU_TOKEN
-```
-
----
-
-# ⚙ Configuração
-
-Configure o arquivo:
-
-```
-src/main/resources/application.properties
-```
-
-Exemplo:
-
-```properties
-spring.datasource.url=jdbc:postgresql://localhost:5432/arena
-spring.datasource.username=postgres
-spring.datasource.password=sua_senha
-
-spring.jpa.hibernate.ddl-auto=update
-spring.jpa.show-sql=true
-```
-
----
-
-# ▶ Como executar
-
-Clone o repositório
-
-```bash
-git clone https://github.com/lazaroaraujo-dev/ArenaDeEsportes.git
-```
-
-Entre na pasta
-
-```bash
-cd ArenaDeEsportes
-```
-
-Execute a aplicação
-
-Linux/macOS
-
-```bash
-./mvnw spring-boot:run
-```
-
-Windows
-
-```bash
-mvn spring-boot:run
-```
-
-ou
-
-```bash
-.\mvnw.cmd spring-boot:run
-```
-
-A aplicação ficará disponível em:
-
-```
-http://localhost:8080
-```
-
----
-
-# 🏛 Arquitetura
-
-O projeto segue uma arquitetura em camadas.
-
-- **Controller** → Recebe as requisições HTTP.
-- **Service** → Contém as regras de negócio.
-- **Repository** → Responsável pelo acesso ao banco de dados.
-- **Model** → Representa as entidades da aplicação.
-- **DTO** → Objetos utilizados para transferência de dados.
-- **Mapper** → Conversão entre entidades e DTOs.
-- **Security** → Configuração da autenticação e autorização.
-
----
-
-# 📈 Melhorias Futuras
-
-- Testes unitários
-- Testes de integração
-- Documentação com Swagger/OpenAPI
-- Paginação das consultas
-- Upload de imagens das quadras
-- Histórico de reservas
-- Notificações por e-mail
-
----
-
-# 👨‍💻 Autor
-
-**Lázaro Araújo**
-
-Projeto desenvolvido para fins acadêmicos, aplicando conceitos de:
-
-- Java
-- Spring Boot
-- APIs REST
-- Spring Security
-- JWT
-- PostgreSQL
-- Arquitetura em Camadas
-- Boas práticas de desenvolvimento
+```text
+src/main/java/br/com/arena/
+├── auth/           # Endpoints e fluxos de autenticação/login
+├── config/         # Configurações globais (CORS, Beans)
+├── controller/     # Camada REST (Exposição dos recursos HTTP)
+├── dto/            # Data Transfer Objects com bean validation
+├── exception/      # Tratamento centralizado de exceções
+├── mapper/         # Conversores entre DTOs e Entidades
+├── model/          # Entidades persistentes do JPA
+├── repository/     # Interfaces de acesso a dados (Spring Data JPA)
+├── security/       # Filtros JWT, SecurityFilterChain e UserDetails
+└── service/        # Regras de negócio e validações
