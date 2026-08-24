@@ -116,7 +116,7 @@ A API estará acessível em: `http://localhost:8080`
 - [x] CRUD completo de Quadras e Agendamentos
 - [x] Validação de regras de negócio (conflitos de horário e datas passadas)
 - [x] Tratamento global de exceções
-- [ ] Documentação interativa via **Swagger/OpenAPI (em andamento)**
+- [x] Documentação interativa via **Swagger/OpenAPI (em andamento)**
 - [ ] Implementação de testes unitários e de integração com **JUnit 5 & Mockito**
 - [ ] Paginação e ordenação de consultas (`Pageable`)
 - [ ] Envio automático de confirmação de agendamento por e-mail
