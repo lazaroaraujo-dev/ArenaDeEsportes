@@ -26,6 +26,7 @@ public class AgendamentoMapper {
         dto.setHoraInicio(agendamento.getHoraInicio());
         dto.setHoraFim(agendamento.getHoraFim());
         dto.setStatus(agendamento.getStatus());
+        dto.setCriadoEm(agendamento.getCriadoEm());
 
         dto.setNomeUsuario(agendamento.getUsuario().getNome());
         dto.setNomeQuadra(agendamento.getQuadra().getNome());
