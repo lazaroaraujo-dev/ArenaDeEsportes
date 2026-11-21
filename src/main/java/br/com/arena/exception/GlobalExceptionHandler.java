@@ -2,14 +2,17 @@ package br.com.arena.exception;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
+import java.sql.SQLException;
 import java.time.LocalDateTime;
 
 @RestControllerAdvice
@@ -44,6 +47,11 @@ public class GlobalExceptionHandler {
         return ResponseEntity.badRequest().body(erro);
     }
 
+    @ExceptionHandler(ConflictException.class)
+    public ResponseEntity<ErrorResponse> tratarConflito(ConflictException ex) {
+        return respostaErro(HttpStatus.CONFLICT, ex.getMessage());
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ErrorResponse> tratarValidacao(
             MethodArgumentNotValidException ex) {
@@ -67,16 +75,36 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponse> tratarErroGenerico(
             Exception ex) {
-        log.error("Erro interno não tratado:", ex);
-        ErrorResponse erro = new ErrorResponse(
-                LocalDateTime.now(),
-                HttpStatus.INTERNAL_SERVER_ERROR.value(),
-                "Erro interno do servidor."
-        );
+        if (violacaoDaConstraintDeSobreposicao(ex)) {
+            return respostaErro(
+                    HttpStatus.CONFLICT,
+                    "Já existe um agendamento bloqueante nesse horário."
+            );
+        }
+        if (falhaTransitoriaDeConcorrencia(ex)) {
+            ErrorResponse erro = new ErrorResponse(
+                    LocalDateTime.now(),
+                    HttpStatus.SERVICE_UNAVAILABLE.value(),
+                    "Conflito transitório no banco de dados; tente novamente."
+            );
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .header(HttpHeaders.RETRY_AFTER, "1")
+                    .body(erro);
+        }
 
-        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(erro);
+        log.error("Erro interno não tratado:", ex);
+        return respostaErro(HttpStatus.INTERNAL_SERVER_ERROR, "Erro interno do servidor.");
     }
+
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<ErrorResponse> tratarMetodoNaoSuportado(
+            HttpRequestMethodNotSupportedException ex) {
+        return respostaErro(
+                HttpStatus.METHOD_NOT_ALLOWED,
+                "O método HTTP solicitado não está disponível para este recurso."
+        );
+    }
+
     @ExceptionHandler(BadCredentialsException.class)
     public ResponseEntity<ErrorResponse> tratarCredenciaisInvalidas(
             BadCredentialsException ex) {
@@ -112,5 +140,43 @@ public class GlobalExceptionHandler {
         );
 
         return ResponseEntity.badRequest().body(erro);
+    }
+
+    private ResponseEntity<ErrorResponse> respostaErro(HttpStatus status, String mensagem) {
+        ErrorResponse erro = new ErrorResponse(
+                LocalDateTime.now(),
+                status.value(),
+                mensagem
+        );
+        return ResponseEntity.status(status).body(erro);
+    }
+
+    private boolean violacaoDaConstraintDeSobreposicao(Throwable erro) {
+        String constraintEsperada = "ex_agendamento_quadra_periodo_bloqueante";
+        for (Throwable causa = erro; causa != null; causa = causa.getCause()) {
+            if (causa instanceof org.hibernate.exception.ConstraintViolationException violacao
+                    && "23P01".equals(violacao.getSQLState())
+                    && constraintEsperada.equals(violacao.getConstraintName())) {
+                return true;
+            }
+            if (causa instanceof SQLException sql
+                    && "23P01".equals(sql.getSQLState())
+                    && sql.getMessage() != null
+                    && sql.getMessage().contains(constraintEsperada)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean falhaTransitoriaDeConcorrencia(Throwable erro) {
+        for (Throwable causa = erro; causa != null; causa = causa.getCause()) {
+            if (causa instanceof SQLException sql
+                    && ("40P01".equals(sql.getSQLState())
+                    || "40001".equals(sql.getSQLState()))) {
+                return true;
+            }
+        }
+        return false;
     }
 }

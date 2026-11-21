@@ -69,9 +69,6 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             }
 
         } catch (Exception ex) {
-            // Token inválido, expirado ou usuário não encontrado —
-            // apenas segue sem autenticar, deixando o SecurityConfig
-            // decidir se a rota exige autenticação ou não.
             SecurityContextHolder.clearContext();
         }
 
