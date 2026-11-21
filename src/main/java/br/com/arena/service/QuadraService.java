@@ -8,6 +8,7 @@ import br.com.arena.mapper.QuadraMapper;
 import br.com.arena.model.Quadra;
 import br.com.arena.repository.QuadraRepository;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.stream.Collectors;
@@ -41,6 +42,16 @@ public class QuadraService {
                         new ResourceNotFoundException("Quadra não encontrada."));
     }
 
+    /**
+     * A chamada deve ocorrer dentro da transação que decide/escreve o estado da quadra.
+     */
+    @Transactional
+    public Quadra buscarParaAtualizacao(Long id) {
+        return quadraRepository.buscarPorIdParaAtualizacao(id)
+                .orElseThrow(() ->
+                        new ResourceNotFoundException("Quadra não encontrada."));
+    }
+
     public QuadraResponseDTO salvar(QuadraRequestDTO dto) {
 
         Quadra quadra = QuadraMapper.toEntity(dto);
@@ -50,33 +61,36 @@ public class QuadraService {
         return QuadraMapper.toDTO(quadra);
     }
 
+    @Transactional
     public QuadraResponseDTO atualizar(Long id, QuadraRequestDTO dto) {
 
-        Quadra quadra = buscarEntidadePorId(id);
+        Quadra quadra = buscarParaAtualizacao(id);
 
         quadra.setNome(dto.getNome());
         quadra.setTipo(dto.getTipo());
         quadra.setAtiva(dto.isAtiva());
 
-        quadra = quadraRepository.save(quadra);
+        quadra = quadraRepository.saveAndFlush(quadra);
 
         return QuadraMapper.toDTO(quadra);
     }
 
+    @Transactional
     public QuadraResponseDTO alterarStatus(Long id, boolean ativa) {
 
-        Quadra quadra = buscarEntidadePorId(id);
+        Quadra quadra = buscarParaAtualizacao(id);
 
         quadra.setAtiva(ativa);
 
-        quadra = quadraRepository.save(quadra);
+        quadra = quadraRepository.saveAndFlush(quadra);
 
         return QuadraMapper.toDTO(quadra);
     }
 
+    @Transactional
     public void deletar(Long id) {
 
-        Quadra quadra = buscarEntidadePorId(id);
+        Quadra quadra = buscarParaAtualizacao(id);
 
         if (!quadra.getAgendamentos().isEmpty()) {
             throw new BusinessException(
