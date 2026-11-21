@@ -1,9 +1,9 @@
 package br.com.arena;
 
+import br.com.arena.testsupport.IsolatedPostgresIntegrationTest;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.test.context.SpringBootTest;
 
-@SpringBootTest
+@IsolatedPostgresIntegrationTest
 class ArenaApplicationTests {
 
 	@Test
