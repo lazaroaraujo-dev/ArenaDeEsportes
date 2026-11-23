@@ -27,9 +27,13 @@ public class TestPostgresContextInitializer
 
         Map<String, Object> properties = new HashMap<>();
         properties.put("spring.datasource.url", settings.url());
-        properties.put("spring.datasource.username", settings.username());
-        properties.put("spring.datasource.password", settings.password());
+        properties.put("spring.datasource.username", settings.runtimeUsername());
+        properties.put("spring.datasource.password", settings.runtimePassword());
         properties.put("spring.flyway.enabled", "true");
+        properties.put("spring.flyway.url", settings.url());
+        properties.put("spring.flyway.user", settings.migratorUsername());
+        properties.put("spring.flyway.password", settings.migratorPassword());
+        properties.put("spring.flyway.placeholders.h04InitialInstall", settings.h04InitialInstall());
         properties.put("spring.jpa.hibernate.ddl-auto", "validate");
         properties.put("jwt.secret", settings.jwtSecret());
         properties.put(

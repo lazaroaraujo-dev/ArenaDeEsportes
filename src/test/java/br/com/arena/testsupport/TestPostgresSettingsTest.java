@@ -50,6 +50,26 @@ class TestPostgresSettingsTest {
     }
 
     @Test
+    void rejectsProductionJwtAndSpringVariablesAsFallback() {
+        Map<String, String> productionFallback = new HashMap<>();
+        productionFallback.put("SPRING_DATASOURCE_URL", "jdbc:postgresql://127.0.0.1:5432/arena");
+        productionFallback.put("SPRING_DATASOURCE_USERNAME", "arena_runtime");
+        productionFallback.put("SPRING_DATASOURCE_PASSWORD", "production-runtime-secret");
+        productionFallback.put("SPRING_FLYWAY_URL", "jdbc:postgresql://127.0.0.1:5432/arena");
+        productionFallback.put("SPRING_FLYWAY_USER", "arena_migrator");
+        productionFallback.put("SPRING_FLYWAY_PASSWORD", "production-migrator-secret");
+        productionFallback.put("JWT_SECRET", "a".repeat(32));
+        productionFallback.put("JWT_EXPIRATION_MS", "3600000");
+
+        IllegalStateException error = assertThrows(
+                IllegalStateException.class,
+                () -> TestPostgresSettings.from(productionFallback)
+        );
+
+        assertTrue(error.getMessage().contains("TEST_POSTGRES_URL"));
+    }
+
+    @Test
     void rejectsDevelopmentDatabasesExternalHostsLocalhostAndUrlParameters() {
         for (String url : new String[]{
                 "jdbc:postgresql://127.0.0.1:5432/arena",
@@ -73,12 +93,12 @@ class TestPostgresSettingsTest {
     @Test
     void requiresCredentialsAndValidJwtSettingsWithoutIncludingValuesInErrors() {
         Map<String, String> missingPassword = validTestEnvironment();
-        missingPassword.remove("TEST_POSTGRES_PASSWORD");
+        missingPassword.remove("TEST_POSTGRES_RUNTIME_PASSWORD");
         IllegalStateException passwordError = assertThrows(
                 IllegalStateException.class,
                 () -> TestPostgresSettings.from(missingPassword)
         );
-        assertTrue(passwordError.getMessage().contains("TEST_POSTGRES_PASSWORD"));
+        assertTrue(passwordError.getMessage().contains("TEST_POSTGRES_RUNTIME_PASSWORD"));
 
         Map<String, String> invalidJwt = validTestEnvironment();
         invalidJwt.put("TEST_JWT_SECRET", "short");
@@ -88,6 +108,76 @@ class TestPostgresSettingsTest {
         );
         assertTrue(jwtError.getMessage().contains("TEST_JWT_SECRET"));
         assertFalse(jwtError.getMessage().contains("short"));
+    }
+
+    @Test
+    void runtimeAndMigratorMustUseDistinctDedicatedRolesAndPasswords() {
+        Map<String, String> sameRole = validTestEnvironment();
+        sameRole.put("TEST_POSTGRES_MIGRATOR_USERNAME", "arena_runtime");
+        assertThrows(
+                IllegalStateException.class,
+                () -> TestPostgresSettings.from(sameRole)
+        );
+
+        Map<String, String> samePassword = validTestEnvironment();
+        samePassword.put(
+                "TEST_POSTGRES_MIGRATOR_PASSWORD",
+                samePassword.get("TEST_POSTGRES_RUNTIME_PASSWORD")
+        );
+        assertThrows(
+                IllegalStateException.class,
+                () -> TestPostgresSettings.from(samePassword)
+        );
+    }
+
+    @Test
+    void writerAndOfflineMustExistWithDistinctPasswordsAndNoFallback() {
+        TestPostgresSettings settings = TestPostgresSettings.from(validTestEnvironment());
+
+        assertEquals("arena_admin_writer", settings.writerUsername());
+        assertEquals("arena_offline_operator", settings.offlineUsername());
+        assertFalse(settings.writerPassword().equals(settings.runtimePassword()));
+        assertFalse(settings.writerPassword().equals(settings.migratorPassword()));
+        assertFalse(settings.writerPassword().equals(settings.offlinePassword()));
+        assertFalse(settings.offlinePassword().equals(settings.runtimePassword()));
+        assertFalse(settings.offlinePassword().equals(settings.migratorPassword()));
+
+        Map<String, String> missingWriter = validTestEnvironment();
+        missingWriter.remove("TEST_POSTGRES_WRITER_PASSWORD");
+        assertThrows(
+                IllegalStateException.class,
+                () -> TestPostgresSettings.from(missingWriter)
+        );
+
+        Map<String, String> writerEqualsOffline = validTestEnvironment();
+        writerEqualsOffline.put("TEST_POSTGRES_OFFLINE_PASSWORD", writerEqualsOffline.get("TEST_POSTGRES_WRITER_PASSWORD"));
+        assertThrows(
+                IllegalStateException.class,
+                () -> TestPostgresSettings.from(writerEqualsOffline)
+        );
+    }
+
+    @Test
+    void h04InitialInstallDefaultsToFalseAndOnlyAcceptsTrueOrFalse() {
+        TestPostgresSettings settings = TestPostgresSettings.from(validTestEnvironment());
+        assertEquals("false", settings.h04InitialInstall());
+
+        Map<String, String> explicitTrue = validTestEnvironment();
+        explicitTrue.put("TEST_H04_INITIAL_INSTALL", "true");
+        assertEquals("true", TestPostgresSettings.from(explicitTrue).h04InitialInstall());
+
+        Map<String, String> invalidValue = validTestEnvironment();
+        invalidValue.put("TEST_H04_INITIAL_INSTALL", "yes");
+        IllegalStateException error = assertThrows(
+                IllegalStateException.class,
+                () -> TestPostgresSettings.from(invalidValue)
+        );
+        assertTrue(error.getMessage().contains("TEST_H04_INITIAL_INSTALL"));
+
+        Map<String, String> productionFallback = validTestEnvironment();
+        productionFallback.remove("TEST_H04_INITIAL_INSTALL");
+        productionFallback.put("H04_INITIAL_INSTALL", "true");
+        assertEquals("false", TestPostgresSettings.from(productionFallback).h04InitialInstall());
     }
 
     @Test
@@ -178,10 +268,17 @@ class TestPostgresSettingsTest {
     private static Map<String, String> validTestEnvironment() {
         Map<String, String> environment = new HashMap<>();
         environment.put("TEST_POSTGRES_URL", SAFE_URL);
-        environment.put("TEST_POSTGRES_USERNAME", "arena_test");
-        environment.put("TEST_POSTGRES_PASSWORD", "p".repeat(32));
+        environment.put("TEST_POSTGRES_RUNTIME_USERNAME", "arena_runtime");
+        environment.put("TEST_POSTGRES_RUNTIME_PASSWORD", "r".repeat(32));
+        environment.put("TEST_POSTGRES_MIGRATOR_USERNAME", "arena_migrator");
+        environment.put("TEST_POSTGRES_MIGRATOR_PASSWORD", "m".repeat(32));
+        environment.put("TEST_POSTGRES_WRITER_USERNAME", "arena_admin_writer");
+        environment.put("TEST_POSTGRES_WRITER_PASSWORD", "w".repeat(32));
+        environment.put("TEST_POSTGRES_OFFLINE_USERNAME", "arena_offline_operator");
+        environment.put("TEST_POSTGRES_OFFLINE_PASSWORD", "o".repeat(32));
         environment.put("TEST_JWT_SECRET", "x".repeat(32));
         environment.put("TEST_JWT_EXPIRATION_MS", "3600000");
+        environment.put("TEST_H04_INITIAL_INSTALL", "false");
         return environment;
     }
 

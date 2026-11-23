@@ -18,6 +18,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
@@ -793,6 +794,12 @@ class AgendamentoConcurrencyIntegrationTest {
             return true;
         } catch (DataIntegrityViolationException ex) {
             if (sqlState(ex, "23P01")) {
+                return false;
+            }
+            throw ex;
+        } catch (PessimisticLockingFailureException ex) {
+            // A disputa concorrente na EXCLUDE também pode abortar com deadlock.
+            if (sqlState(ex, "40P01")) {
                 return false;
             }
             throw ex;

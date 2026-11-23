@@ -14,9 +14,7 @@ public class PostgresClock {
         this.jdbcTemplate = jdbcTemplate;
     }
 
-    /**
-     * Deve ser chamado dentro da transação e somente depois dos locks necessários.
-     */
+
     public Instant agora() {
         return jdbcTemplate.queryForObject(
                 "SELECT clock_timestamp()",

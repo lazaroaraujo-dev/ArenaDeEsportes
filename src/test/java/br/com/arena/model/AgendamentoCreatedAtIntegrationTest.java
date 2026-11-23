@@ -12,6 +12,9 @@ import jakarta.persistence.PersistenceContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.MigrationInfo;
+import org.flywaydb.core.api.MigrationState;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -42,6 +45,9 @@ class AgendamentoCreatedAtIntegrationTest {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private Flyway flyway;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -149,16 +155,7 @@ class AgendamentoCreatedAtIntegrationTest {
 
     @Test
     void flywayV1ExisteEConstraintDeSobreposicaoFoiCriada() {
-        String versao = jdbcTemplate.queryForObject(
-                """
-                SELECT version
-                FROM flyway_schema_history
-                WHERE success = TRUE
-                ORDER BY installed_rank DESC
-                LIMIT 1
-                """,
-                String.class
-        );
+        MigrationInfo[] migrations = flyway.info().applied();
         Long quantidadeConstraints = jdbcTemplate.queryForObject(
                 """
                 SELECT count(*)
@@ -170,7 +167,11 @@ class AgendamentoCreatedAtIntegrationTest {
                 Long.class
         );
 
-        assertEquals("1", versao);
+        assertEquals(2, migrations.length);
+        assertEquals("1", migrations[0].getVersion().getVersion());
+        assertEquals(MigrationState.SUCCESS, migrations[0].getState());
+        assertEquals("2", migrations[1].getVersion().getVersion());
+        assertEquals(MigrationState.SUCCESS, migrations[1].getState());
         assertEquals(1L, quantidadeConstraints);
     }
 
