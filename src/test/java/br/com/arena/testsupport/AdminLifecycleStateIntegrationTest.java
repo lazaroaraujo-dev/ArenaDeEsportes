@@ -79,7 +79,8 @@ class AdminLifecycleStateIntegrationTest {
                 () -> offlineJdbc().queryForObject(
                         """
                         SELECT public.h04_bootstrap_first_admin(
-                            'Bootstrap', 'bootstrap@example.invalid', '000', 'hash'
+                            'Bootstrap', 'bootstrap@example.invalid', '000', 'hash',
+                            'test-operator'
                         )
                         """,
                         Long.class
@@ -92,11 +93,31 @@ class AdminLifecycleStateIntegrationTest {
     }
 
     @Test
+    void legacyRecoverySignatureIsDeniedForOfflineOperator() {
+        DataAccessException error = assertThrows(
+                DataAccessException.class,
+                () -> offlineJdbc().queryForObject(
+                        """
+                        SELECT public.h04_recover_admin(
+                            NULL, 'Legacy', 'legacy@example.invalid', '000', 'hash'
+                        )
+                        """,
+                        Long.class
+                )
+        );
+
+        assertTrue(error.getCause() instanceof org.postgresql.util.PSQLException);
+        assertTrue(error.getCause().getMessage().contains("permission denied for function"),
+                "A assinatura legada de recovery não pode ser executada por arena_offline_operator");
+    }
+
+    @Test
     void recoveryCreatesAdminAndClearsRecoveryFlag() {
         Long userId = offlineJdbc().queryForObject(
                 """
                 SELECT public.h04_recover_admin(
-                    NULL, 'Recovered', 'recovered@example.invalid', '000', 'hash'
+                    NULL, 'Recovered', 'recovered@example.invalid', '000', 'hash',
+                    'test-operator', 'perda do último ADMIN', 'TICKET-12345'
                 )
                 """,
                 Long.class
@@ -118,6 +139,13 @@ class AdminLifecycleStateIntegrationTest {
                 Long.class
         );
         assertEquals(1L, auditCount);
+
+        Map<String, Object> auditEvent = migratorJdbc().queryForMap(
+                "SELECT actor_ref, reason, change_ticket FROM public.admin_audit_event WHERE operation = 'RECOVERY'"
+        );
+        assertEquals("test-operator", auditEvent.get("actor_ref"));
+        assertEquals("perda do último ADMIN", auditEvent.get("reason"));
+        assertEquals("TICKET-12345", auditEvent.get("change_ticket"));
     }
 
     @Test

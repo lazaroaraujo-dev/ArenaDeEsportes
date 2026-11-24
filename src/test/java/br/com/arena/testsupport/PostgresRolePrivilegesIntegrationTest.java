@@ -146,6 +146,58 @@ class PostgresRolePrivilegesIntegrationTest {
     }
 
     @Test
+    void offlineOperatorCanExecuteOnlyNewAdminFunctionSignatures() {
+        JdbcTemplate offlineJdbc = offlineJdbc();
+
+        assertFalse(
+                hasFunctionPrivilege(
+                        offlineJdbc,
+                        "arena_offline_operator",
+                        "public.h04_bootstrap_first_admin(character varying, character varying, character varying, character varying)"
+                ),
+                "Assinatura legada de bootstrap não pode ter EXECUTE"
+        );
+        assertFalse(
+                hasFunctionPrivilege(
+                        offlineJdbc,
+                        "arena_offline_operator",
+                        "public.h04_recover_admin(bigint, character varying, character varying, character varying, character varying)"
+                ),
+                "Assinatura legada de recovery não pode ter EXECUTE"
+        );
+        assertTrue(
+                hasFunctionPrivilege(
+                        offlineJdbc,
+                        "arena_offline_operator",
+                        "public.h04_bootstrap_first_admin(character varying, character varying, character varying, character varying, character varying)"
+                ),
+                "Assinatura nova de bootstrap deve ter EXECUTE"
+        );
+        assertTrue(
+                hasFunctionPrivilege(
+                        offlineJdbc,
+                        "arena_offline_operator",
+                        "public.h04_recover_admin(bigint, character varying, character varying, character varying, character varying, character varying, text, character varying)"
+                ),
+                "Assinatura nova de recovery deve ter EXECUTE"
+        );
+    }
+
+    private static boolean hasFunctionPrivilege(
+            JdbcTemplate jdbc,
+            String role,
+            String functionSignature
+    ) {
+        Boolean granted = jdbc.queryForObject(
+                "SELECT has_function_privilege(?, ?, 'EXECUTE')",
+                Boolean.class,
+                role,
+                functionSignature
+        );
+        return Boolean.TRUE.equals(granted);
+    }
+
+    @Test
     void runtimeGetsOnlyApplicationDmlAndSequenceUseNotFlywayMetadata() {
         for (String table : new String[]{"usuario", "quadra", "agendamento"}) {
             assertTrue(hasTablePrivilege(table, "SELECT"), table);

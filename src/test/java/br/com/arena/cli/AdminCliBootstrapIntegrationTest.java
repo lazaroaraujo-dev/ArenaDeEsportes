@@ -9,6 +9,8 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
 import javax.sql.DataSource;
 
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
 import java.util.Map;
@@ -127,11 +129,29 @@ class AdminCliBootstrapIntegrationTest {
                 .addPassword("senhaSegura123!")
                 .addPassword("senhaSegura123!");
 
-        CliRunner runner = new CliRunner(offlineEnvironment(), input);
-        int exitCode = runner.execute("bootstrap");
+        PrintStream originalOut = System.out;
+        PrintStream originalErr = System.err;
+        ByteArrayOutputStream capturedOutput = new ByteArrayOutputStream();
+        int exitCode;
 
+        // O CliRunner cria seu PrintWriter a partir de System.out no construtor,
+        // portanto a captura precisa ser instalada antes de instanciá-lo.
+        try (PrintStream capture = new PrintStream(capturedOutput, true, StandardCharsets.UTF_8)) {
+            System.setOut(capture);
+            System.setErr(capture);
+            CliRunner runner = new CliRunner(offlineEnvironment(), input);
+            exitCode = runner.execute("bootstrap");
+        } finally {
+            System.setOut(originalOut);
+            System.setErr(originalErr);
+        }
+
+        String output = capturedOutput.toString(StandardCharsets.UTF_8);
         assertEquals(CliRunner.EXIT_BUSINESS_ERROR, exitCode);
-        assertTrue(runnerLastErrorContains(runner, "recovery is required"));
+        assertTrue(output.contains("Bootstrap rejeitado:"),
+                "A saída deve conter o prefixo de rejeição do bootstrap. Saída: " + output);
+        assertTrue(output.contains("H-04 cannot bootstrap while recovery is required"),
+                "A mensagem real da função SQL deve aparecer na saída do CLI. Saída: " + output);
         assertEquals(0L, countAdmins());
     }
 
@@ -186,12 +206,6 @@ class AdminCliBootstrapIntegrationTest {
                             """.getBytes(StandardCharsets.UTF_8))
             );
         }
-    }
-
-    private boolean runnerLastErrorContains(CliRunner runner, String substring) {
-        // Capturar output seria necessário para verificar mensagens. Por
-        // simplicidade, verificamos o estado do banco, que é o critério real.
-        return true;
     }
 
     private Long countAdmins() {

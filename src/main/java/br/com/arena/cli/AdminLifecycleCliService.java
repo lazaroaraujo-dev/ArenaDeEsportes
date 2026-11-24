@@ -54,9 +54,23 @@ public class AdminLifecycleCliService {
     public boolean v3FunctionsExist() {
         Integer count = jdbcTemplate.queryForObject(
                 """
-                SELECT COUNT(DISTINCT proname) FROM pg_proc
+                SELECT COUNT(*) FROM pg_proc
                 WHERE pronamespace = 'public'::regnamespace
-                  AND proname IN ('h04_bootstrap_first_admin', 'h04_recover_admin')
+                  AND (
+                      (
+                          proname = 'h04_bootstrap_first_admin'
+                          AND pronargs = 5
+                          AND array_to_string(proargtypes::regtype[], ',') =
+                              'character varying,character varying,character varying,character varying,character varying'
+                      )
+                      OR
+                      (
+                          proname = 'h04_recover_admin'
+                          AND pronargs = 8
+                          AND array_to_string(proargtypes::regtype[], ',') =
+                              'bigint,character varying,character varying,character varying,character varying,character varying,text,character varying'
+                      )
+                  )
                 """,
                 Integer.class
         );

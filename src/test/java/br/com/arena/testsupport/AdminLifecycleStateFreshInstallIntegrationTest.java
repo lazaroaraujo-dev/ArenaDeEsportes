@@ -70,7 +70,8 @@ class AdminLifecycleStateFreshInstallIntegrationTest {
         Long userId = offlineJdbc().queryForObject(
                 """
                 SELECT public.h04_bootstrap_first_admin(
-                    'First Admin', 'first.admin@example.invalid', '000', 'hash'
+                    'First Admin', 'first.admin@example.invalid', '000', 'hash',
+                    'test-operator'
                 )
                 """,
                 Long.class
@@ -92,6 +93,12 @@ class AdminLifecycleStateFreshInstallIntegrationTest {
                 Long.class
         );
         assertEquals(1L, auditCount);
+
+        String actorRef = migratorJdbc().queryForObject(
+                "SELECT actor_ref FROM public.admin_audit_event WHERE operation = 'BOOTSTRAP'",
+                String.class
+        );
+        assertEquals("test-operator", actorRef);
     }
 
     @Test
@@ -103,7 +110,8 @@ class AdminLifecycleStateFreshInstallIntegrationTest {
                 () -> offlineJdbc().queryForObject(
                         """
                         SELECT public.h04_bootstrap_first_admin(
-                            'Second', 'second@example.invalid', '000', 'hash'
+                            'Second', 'second@example.invalid', '000', 'hash',
+                            'test-operator'
                         )
                         """,
                         Long.class
@@ -113,6 +121,25 @@ class AdminLifecycleStateFreshInstallIntegrationTest {
         assertTrue(error.getCause() instanceof org.postgresql.util.PSQLException);
         assertTrue(error.getMessage().contains("bootstrap already consumed"));
         assertEquals(1L, countAdmins());
+    }
+
+    @Test
+    void legacyBootstrapSignatureIsDeniedForOfflineOperator() {
+        DataAccessException error = assertThrows(
+                DataAccessException.class,
+                () -> offlineJdbc().queryForObject(
+                        """
+                        SELECT public.h04_bootstrap_first_admin(
+                            'Legacy', 'legacy@example.invalid', '000', 'hash'
+                        )
+                        """,
+                        Long.class
+                )
+        );
+
+        assertTrue(error.getCause() instanceof org.postgresql.util.PSQLException);
+        assertTrue(error.getCause().getMessage().contains("permission denied for function"),
+                "A assinatura legada de bootstrap não pode ser executada por arena_offline_operator");
     }
 
     private Long countAdmins() {

@@ -1,13 +1,25 @@
 package br.com.arena.dto.usuario;
 
-import br.com.arena.enumerate.Perfil;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 
+/**
+ * @deprecated Utilize {@link UsuarioCadastroDTO} para cadastro ou {@link UsuarioUpdateDTO} para atualização de dados pessoais.
+ * O campo perfil foi removido para evitar atribuição inadvertida via DTO genérico.
+ */
+@Deprecated
 @Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class UsuarioRequestDTO {
 
     @NotBlank(message = "O nome é obrigatório.")
@@ -28,6 +40,4 @@ public class UsuarioRequestDTO {
     @NotBlank(message = "A senha é obrigatória.")
     @Size(min = 6, message = "A senha deve ter pelo menos 6 caracteres.")
     private String senha;
-
-    private Perfil perfil;
 }

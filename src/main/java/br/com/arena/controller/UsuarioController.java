@@ -1,12 +1,14 @@
 package br.com.arena.controller;
 
-import br.com.arena.dto.usuario.UsuarioRequestDTO;
-import br.com.arena.dto.usuario.UsuarioResponseDTO;
+import br.com.arena.dto.usuario.*;
+import br.com.arena.exception.ConflictException;
+import br.com.arena.exception.ResourceNotFoundException;
 import br.com.arena.model.Usuario;
 import br.com.arena.security.SecurityUtils;
 import br.com.arena.service.UsuarioService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
@@ -36,10 +38,10 @@ public class UsuarioController {
 
     @PutMapping("/me")
     public UsuarioResponseDTO atualizarMeuPerfil(
-            @Valid @RequestBody UsuarioRequestDTO dto) {
+            @Valid @RequestBody UsuarioUpdateDTO dto) {
 
         Usuario usuarioLogado = SecurityUtils.getUsuarioLogado();
-        return usuarioService.atualizarProprioPerfil(usuarioLogado.getId(), dto);
+        return usuarioService.atualizarDadosPessoais(usuarioLogado.getId(), dto);
     }
 
     @GetMapping("/{id}")
@@ -50,21 +52,46 @@ public class UsuarioController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public UsuarioResponseDTO salvar(@Valid @RequestBody UsuarioRequestDTO dto) {
+    public UsuarioResponseDTO salvar(@Valid @RequestBody UsuarioCadastroDTO dto) {
         return usuarioService.salvar(dto);
     }
 
     @PutMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     public UsuarioResponseDTO atualizar(@PathVariable Long id,
-                                        @Valid @RequestBody UsuarioRequestDTO dto) {
-        return usuarioService.atualizar(id, dto);
+                                        @Valid @RequestBody UsuarioUpdateDTO dto) {
+        return usuarioService.atualizarDadosPessoais(id, dto);
+    }
+
+    @PatchMapping("/{id}/perfil")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<UsuarioResponseDTO> alterarPerfil(
+            @PathVariable Long id,
+            @Valid @RequestBody UsuarioPerfilDTO dto) {
+
+        AdminOperationResult result = usuarioService.alterarPerfil(id, dto);
+
+        if (result.status() == AdminOperationStatus.TARGET_NOT_FOUND) {
+            throw new ResourceNotFoundException(result.message());
+        }
+        if (result.status() == AdminOperationStatus.LAST_ADMIN) {
+            throw new ConflictException(result.message());
+        }
+
+        return ResponseEntity.ok(result.usuario());
     }
 
     @PreAuthorize("hasRole('ADMIN')")
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deletar(@PathVariable Long id) {
-        usuarioService.deletar(id);
+        AdminOperationResult result = usuarioService.deletarAdministrativo(id);
+
+        if (result.status() == AdminOperationStatus.TARGET_NOT_FOUND) {
+            throw new ResourceNotFoundException(result.message());
+        }
+        if (result.status() == AdminOperationStatus.LAST_ADMIN) {
+            throw new ConflictException(result.message());
+        }
     }
 }
