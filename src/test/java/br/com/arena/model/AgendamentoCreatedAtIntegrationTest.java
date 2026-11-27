@@ -1,12 +1,12 @@
 package br.com.arena.model;
 
-import br.com.arena.enumerate.Perfil;
 import br.com.arena.enumerate.StatusAgendamento;
 import br.com.arena.enumerate.TipoQuadra;
 import br.com.arena.repository.AgendamentoRepository;
 import br.com.arena.repository.QuadraRepository;
 import br.com.arena.repository.UsuarioRepository;
 import br.com.arena.testsupport.IsolatedPostgresIntegrationTest;
+import br.com.arena.testsupport.TestUsuarioFixture;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import org.junit.jupiter.api.BeforeEach;
@@ -52,6 +52,8 @@ class AgendamentoCreatedAtIntegrationTest {
     @PersistenceContext
     private EntityManager entityManager;
 
+    private TestUsuarioFixture usuarioFixture;
+
     @BeforeEach
     void garantirBancoDeTeste() {
         assertEquals(
@@ -59,6 +61,7 @@ class AgendamentoCreatedAtIntegrationTest {
                 jdbcTemplate.queryForObject("SELECT current_database()", String.class),
                 "Os testes não podem executar em outro database."
         );
+        usuarioFixture = new TestUsuarioFixture(usuarioRepository, flyway);
     }
 
     @Test
@@ -155,7 +158,6 @@ class AgendamentoCreatedAtIntegrationTest {
 
     @Test
     void flywayV1ExisteEConstraintDeSobreposicaoFoiCriada() {
-        MigrationInfo[] migrations = flyway.info().applied();
         Long quantidadeConstraints = jdbcTemplate.queryForObject(
                 """
                 SELECT count(*)
@@ -167,22 +169,33 @@ class AgendamentoCreatedAtIntegrationTest {
                 Long.class
         );
 
-        assertEquals(2, migrations.length);
-        assertEquals("1", migrations[0].getVersion().getVersion());
-        assertEquals(MigrationState.SUCCESS, migrations[0].getState());
-        assertEquals("2", migrations[1].getVersion().getVersion());
-        assertEquals(MigrationState.SUCCESS, migrations[1].getState());
+        MigrationInfo v1 = migrationAplicada("1");
+        MigrationInfo v2 = migrationAplicada("2");
+
+        assertNotNull(v1, "A migration V1 deve estar aplicada");
+        assertEquals(MigrationState.SUCCESS, v1.getState());
+        assertNotNull(v2, "A migration V2 deve estar aplicada");
+        assertEquals(MigrationState.SUCCESS, v2.getState());
         assertEquals(1L, quantidadeConstraints);
     }
 
+    private MigrationInfo migrationAplicada(String versao) {
+        for (MigrationInfo info : flyway.info().applied()) {
+            if (versao.equals(info.getVersion().getVersion())) {
+                return info;
+            }
+        }
+        return null;
+    }
+
     private Agendamento criarAgendamento(StatusAgendamento status) {
-        Usuario usuario = new Usuario();
-        usuario.setNome("Usuário Teste");
-        usuario.setEmail(UUID.randomUUID() + "@example.invalid");
-        usuario.setTelefone("11999999999");
-        usuario.setSenha("hash-de-teste");
-        usuario.setPerfil(Perfil.CLIENTE);
-        usuario = usuarioRepository.saveAndFlush(usuario);
+        // arena_runtime cria CLIENTE pela função h04_registrar_cliente(...).
+        Usuario usuario = usuarioFixture.criarCliente(
+                "Usuário Teste",
+                UUID.randomUUID() + "@example.invalid",
+                "11999999999",
+                "hash-de-teste"
+        );
 
         Quadra quadra = new Quadra();
         quadra.setNome("Quadra Teste");

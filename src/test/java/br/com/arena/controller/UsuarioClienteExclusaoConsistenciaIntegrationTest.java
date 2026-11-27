@@ -25,10 +25,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.doAnswer;
 
 @IsolatedPostgresIntegrationTest
 class UsuarioClienteExclusaoConsistenciaIntegrationTest {
@@ -77,8 +76,10 @@ class UsuarioClienteExclusaoConsistenciaIntegrationTest {
         if (admins.size() > 1) {
             for (int i = 1; i < admins.size(); i++) {
                 Usuario extra = admins.get(i);
-                extra.setPerfil(Perfil.CLIENTE);
-                usuarioRepository.saveAndFlush(extra);
+                migratorJdbc.update(
+                        "UPDATE public.usuario SET perfil = 'CLIENTE' WHERE id = ?",
+                        extra.getId()
+                );
             }
         }
     }
@@ -130,13 +131,21 @@ class UsuarioClienteExclusaoConsistenciaIntegrationTest {
 
     private Usuario criarCliente(String prefixo) {
         String sufixo = UUID.randomUUID().toString().substring(0, 8);
-        Usuario u = new Usuario();
-        u.setNome("Cliente " + prefixo + " " + sufixo);
-        u.setEmail(prefixo.toLowerCase() + "_" + sufixo + "@exemplo.invalid");
-        u.setTelefone("11988887777");
-        u.setSenha(passwordEncoder.encode("senha123!"));
-        u.setPerfil(Perfil.CLIENTE);
-        return usuarioRepository.saveAndFlush(u);
+        String email = prefixo.toLowerCase() + "_" + sufixo + "@exemplo.invalid";
+        Long id = migratorJdbc.queryForObject(
+                """
+                INSERT INTO public.usuario (nome, email, telefone, senha, perfil)
+                VALUES (?, ?, ?, ?, 'CLIENTE')
+                RETURNING id
+                """,
+                Long.class,
+                "Cliente " + prefixo + " " + sufixo,
+                email,
+                "11988887777",
+                passwordEncoder.encode("senha123!")
+        );
+
+        return usuarioRepository.findById(id).orElseThrow();
     }
 
     private void autenticarComo(Usuario usuario) {
@@ -176,8 +185,12 @@ class UsuarioClienteExclusaoConsistenciaIntegrationTest {
             usuarioService.deletarAdministrativo(cliente.getId());
         });
 
-        assertTrue(ex.getMessage().contains("Inconsistencia administrativa: admin_count"),
-                "Mensagem de erro deve detalhar a divergência de admin_count");
+        assertTrue(ex.getMessage().contains("estado administrativo inconsistente"),
+                "A função deve falhar fechado com erro interno (SQLSTATE 55000)");
+        assertTrue(ex.getCause() != null
+                        && ex.getCause().getMessage() != null
+                        && ex.getCause().getMessage().contains("admin_count"),
+                "A causa original da função deve ser preservada, sem mascaramento");
         assertTrue(usuarioRepository.existsById(cliente.getId()),
                 "Cliente NÃO deve ser excluído quando validação preventiva falha");
     }
@@ -198,8 +211,12 @@ class UsuarioClienteExclusaoConsistenciaIntegrationTest {
             usuarioService.deletarAdministrativo(cliente.getId());
         });
 
-        assertTrue(ex.getMessage().contains("sistema nao esta em estado CONSUMED ativo"),
-                "Mensagem deve apontar inconsistência por recovery_required ativo");
+        assertTrue(ex.getMessage().contains("estado administrativo inconsistente"),
+                "A função deve falhar fechado com erro interno (SQLSTATE 55000)");
+        assertTrue(ex.getCause() != null
+                        && ex.getCause().getMessage() != null
+                        && ex.getCause().getMessage().contains("recovery_required"),
+                "A causa original da função deve ser preservada");
         assertTrue(usuarioRepository.existsById(cliente.getId()),
                 "Cliente NÃO deve ser excluído em estado de recovery");
     }
@@ -220,8 +237,12 @@ class UsuarioClienteExclusaoConsistenciaIntegrationTest {
             usuarioService.deletarAdministrativo(cliente.getId());
         });
 
-        assertTrue(ex.getMessage().contains("sistema nao esta em estado CONSUMED ativo"),
-                "Mensagem deve apontar que bootstrap_consumed é false");
+        assertTrue(ex.getMessage().contains("estado administrativo inconsistente"),
+                "A função deve falhar fechado com erro interno (SQLSTATE 55000)");
+        assertTrue(ex.getCause() != null
+                        && ex.getCause().getMessage() != null
+                        && ex.getCause().getMessage().contains("bootstrap_consumed"),
+                "A causa original da função deve ser preservada");
         assertTrue(usuarioRepository.existsById(cliente.getId()),
                 "Cliente NÃO deve ser excluído antes do consumo do bootstrap");
     }
@@ -247,20 +268,22 @@ class UsuarioClienteExclusaoConsistenciaIntegrationTest {
     }
 
     /**
-     * 5. Aquisição e retenção correta do advisory lock durante a operação de exclusão de CLIENTE.
+     * 5. A exclusão de CLIENTE passa a aguardar o advisory lock adquirido dentro da
+     * própria função SECURITY DEFINER, executada pelo datasource do writer.
      */
     @Test
-    void advisoryLockPermaneceAtivoDuranteExclusaoDeCliente() throws Exception {
+    void exclusaoDeClienteAguardaAdvisoryLockDaFuncao() throws Exception {
         Usuario admin = obterPrimeiroAdmin();
         Usuario clienteAlvo = criarCliente("alvo_lock");
 
         ExecutorService executorA = Executors.newSingleThreadExecutor();
-        CountDownLatch lockAcquiredByALatch = new CountDownLatch(1);
-        CountDownLatch bPidCapturedLatch = new CountDownLatch(1);
-        AtomicLong pidA = new AtomicLong();
-        AtomicLong pidB = new AtomicLong();
+        ExecutorService executorB = Executors.newSingleThreadExecutor();
+        CountDownLatch lockAcquired = new CountDownLatch(1);
+        CountDownLatch liberarLock = new CountDownLatch(1);
+        CountDownLatch exclusaoConcluida = new CountDownLatch(1);
+        AtomicReference<Throwable> falhaExclusao = new AtomicReference<>();
 
-        // Thread A adquire o lock primeiro em transação manual e registra seu PID
+        // Thread A mantém o advisory lock compartilhado com a função de exclusão.
         Future<?> futureA = executorA.submit(() -> {
             org.springframework.transaction.support.DefaultTransactionDefinition def =
                     new org.springframework.transaction.support.DefaultTransactionDefinition();
@@ -268,57 +291,10 @@ class UsuarioClienteExclusaoConsistenciaIntegrationTest {
             org.springframework.transaction.TransactionStatus status = transactionManager.getTransaction(def);
 
             try {
-                jdbcTemplate.execute("SELECT pg_advisory_xact_lock(" + AdminLifecycleDbService.ADMIN_LIFECYCLE_LOCK_KEY + ")");
-                Integer pidAValue = jdbcTemplate.queryForObject("SELECT pg_backend_pid()", Integer.class);
-                assertNotNull(pidAValue, "PID da sessão de A deve estar disponível");
-                pidA.set(pidAValue.longValue());
-
-                Long locksA = jdbcTemplate.queryForObject(
-                        """
-                        SELECT count(*) FROM pg_locks
-                        WHERE pid = ?
-                          AND locktype = 'advisory'
-                          AND ((classid::bigint << 32) | objid::bigint) = ?
-                          AND objsubid = 1
-                          AND granted = true
-                        """,
-                        Long.class,
-                        pidA.get(),
-                        AdminLifecycleDbService.ADMIN_LIFECYCLE_LOCK_KEY
-                );
-                assertEquals(1L, locksA != null ? locksA : 0L,
-                        "A sessão de A deve ser a detentora do advisory lock");
-
-                lockAcquiredByALatch.countDown();
-
-                assertTrue(bPidCapturedLatch.await(5, TimeUnit.SECONDS), "Thread B deve registrar seu PID");
-
-                // Comprova que a sessão específica de Thread B está bloqueada no advisory lock
-                boolean bBloqueado = false;
-                long deadline = System.currentTimeMillis() + 10000;
-                while (System.currentTimeMillis() < deadline) {
-                    Integer waiting = jdbcTemplate.queryForObject(
-                            """
-                            SELECT count(*) FROM pg_locks
-                            WHERE pid = ?
-                              AND locktype = 'advisory'
-                              AND ((classid::bigint << 32) | objid::bigint) = ?
-                              AND objsubid = 1
-                              AND NOT granted
-                            """,
-                            Integer.class,
-                            pidB.get(),
-                            AdminLifecycleDbService.ADMIN_LIFECYCLE_LOCK_KEY
-                    );
-                    if (waiting != null && waiting > 0) {
-                        bBloqueado = true;
-                        break;
-                    }
-                    Thread.sleep(50);
-                }
-                assertTrue(bBloqueado,
-                        "A sessão " + pidB.get() + " de B deve estar bloqueada no advisory lock 7409395520021");
-
+                jdbcTemplate.execute("SELECT pg_advisory_xact_lock("
+                        + AdminLifecycleDbService.ADMIN_LIFECYCLE_LOCK_KEY + ")");
+                lockAcquired.countDown();
+                assertTrue(liberarLock.await(10, TimeUnit.SECONDS), "O teste deve liberar o lock");
                 transactionManager.commit(status);
             } catch (Throwable ex) {
                 if (!status.isCompleted()) {
@@ -328,30 +304,37 @@ class UsuarioClienteExclusaoConsistenciaIntegrationTest {
             }
         });
 
-        assertTrue(lockAcquiredByALatch.await(5, TimeUnit.SECONDS), "Thread A deve adquirir o lock");
+        try {
+            assertTrue(lockAcquired.await(5, TimeUnit.SECONDS), "Thread A deve adquirir o lock");
 
-        // Captura o PID dentro do adquirirLock() do próprio serviço, sem transação externa.
-        doAnswer(invocation -> {
-            Integer pidBValue = jdbcTemplate.queryForObject("SELECT pg_backend_pid()", Integer.class);
-            assertNotNull(pidBValue, "PID da sessão de B deve estar disponível");
-            pidB.set(pidBValue.longValue());
-            bPidCapturedLatch.countDown();
-            return invocation.callRealMethod();
-        }).when(adminLifecycleDbServiceSpy).adquirirLock();
+            Future<?> futureB = executorB.submit(() -> {
+                try {
+                    autenticarComo(admin);
+                    usuarioService.deletarAdministrativo(clienteAlvo.getId());
+                } catch (Throwable ex) {
+                    falhaExclusao.set(ex);
+                } finally {
+                    exclusaoConcluida.countDown();
+                }
+            });
 
-        // Thread B: chama deletarAdministrativo para CLIENTE
-        ExecutorService executorB = Executors.newSingleThreadExecutor();
-        Future<?> futureB = executorB.submit(() -> {
-            autenticarComo(admin);
-            usuarioService.deletarAdministrativo(clienteAlvo.getId());
-        });
+            assertFalse(exclusaoConcluida.await(500, TimeUnit.MILLISECONDS),
+                    "A exclusão deve aguardar o advisory lock detido por outra sessão");
 
-        futureA.get(15, TimeUnit.SECONDS);
-        futureB.get(15, TimeUnit.SECONDS);
+            liberarLock.countDown();
 
-        executorA.shutdown();
-        executorB.shutdown();
+            assertTrue(exclusaoConcluida.await(10, TimeUnit.SECONDS),
+                    "A exclusão deve concluir após a liberação do lock");
+            futureA.get(15, TimeUnit.SECONDS);
+            futureB.get(15, TimeUnit.SECONDS);
+            assertNull(falhaExclusao.get());
+        } finally {
+            liberarLock.countDown();
+            executorA.shutdownNow();
+            executorB.shutdownNow();
+        }
 
-        assertFalse(usuarioRepository.existsById(clienteAlvo.getId()), "O cliente deve ser excluído após Thread B adquirir o lock");
+        assertFalse(usuarioRepository.existsById(clienteAlvo.getId()),
+                "O cliente deve ser excluído após a liberação do lock");
     }
 }

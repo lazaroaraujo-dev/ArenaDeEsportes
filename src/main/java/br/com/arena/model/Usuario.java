@@ -39,6 +39,14 @@ public class Usuario implements UserDetails {
     @Column(nullable = false)
     private Perfil perfil;
 
+    /**
+     * Versão da credencial, usada para invalidar JWTs emitidos antes de uma
+     * futura alteração de senha. Somente leitura pelo runtime: o DEFAULT do
+     * PostgreSQL fornece o valor inicial e atualizações exigem função segura.
+     */
+    @Column(name = "credential_version", nullable = false, insertable = false, updatable = false)
+    private Long credentialVersion;
+
     @OneToMany(mappedBy = "usuario")
     private List<Agendamento> agendamentos;
 

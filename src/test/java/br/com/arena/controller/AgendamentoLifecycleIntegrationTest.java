@@ -14,6 +14,8 @@ import br.com.arena.security.JwtService;
 import br.com.arena.service.AgendamentoExpirationService;
 import br.com.arena.service.AgendamentoExpirationScheduler;
 import br.com.arena.testsupport.IsolatedPostgresIntegrationTest;
+import br.com.arena.testsupport.TestUsuarioFixture;
+import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -65,6 +67,11 @@ class AgendamentoLifecycleIntegrationTest {
     @Autowired
     private AgendamentoExpirationScheduler expirationScheduler;
 
+    @Autowired
+    private Flyway flyway;
+
+    private TestUsuarioFixture usuarioFixture;
+
     private Usuario cliente;
     private Usuario outroCliente;
     private Usuario admin;
@@ -79,6 +86,7 @@ class AgendamentoLifecycleIntegrationTest {
         );
 
         slot = 0;
+        usuarioFixture = new TestUsuarioFixture(usuarioRepository, flyway);
         cliente = salvarUsuario(Perfil.CLIENTE);
         outroCliente = salvarUsuario(Perfil.CLIENTE);
         admin = salvarUsuario(Perfil.ADMIN);
@@ -443,13 +451,14 @@ class AgendamentoLifecycleIntegrationTest {
     }
 
     private Usuario salvarUsuario(Perfil perfil) {
-        Usuario usuario = new Usuario();
-        usuario.setNome("Usuário " + UUID.randomUUID());
-        usuario.setEmail(UUID.randomUUID() + "@example.invalid");
-        usuario.setTelefone("11999999999");
-        usuario.setSenha("hash-de-teste");
-        usuario.setPerfil(perfil);
-        return usuarioRepository.saveAndFlush(usuario);
+        String email = UUID.randomUUID() + "@example.invalid";
+        String nome = "Usuário " + UUID.randomUUID();
+        if (perfil == Perfil.ADMIN) {
+            // arena_migrator prepara ADMIN; nunca via cadastro público nem runtime.
+            return usuarioFixture.criarAdmin(nome, email, "11999999999", "hash-de-teste");
+        }
+        // arena_runtime cria CLIENTE pela função h04_registrar_cliente(...).
+        return usuarioFixture.criarCliente(nome, email, "11999999999", "hash-de-teste");
     }
 
     private Agendamento criarAgendamento(StatusAgendamento status) {

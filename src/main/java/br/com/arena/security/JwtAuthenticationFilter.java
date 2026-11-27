@@ -1,6 +1,7 @@
 package br.com.arena.security;
 
 import br.com.arena.model.Usuario;
+import io.jsonwebtoken.Claims;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -42,7 +43,9 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
         try {
 
-            String email = jwtService.extractUsername(token);
+            // Assinatura e expiração são verificadas uma única vez.
+            Claims claims = jwtService.parseClaims(token);
+            String email = claims.getSubject();
 
             if (email != null
                     && SecurityContextHolder.getContext().getAuthentication() == null) {
@@ -50,7 +53,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 UserDetails userDetails =
                         userDetailsService.loadUserByUsername(email);
 
-                if (jwtService.isTokenValid(token, (Usuario) userDetails)) {
+                if (userDetails instanceof Usuario usuario
+                        && jwtService.isTokenValid(claims, usuario)) {
 
                     UsernamePasswordAuthenticationToken authToken =
                             new UsernamePasswordAuthenticationToken(

@@ -24,6 +24,7 @@ import org.springframework.test.web.servlet.MvcResult;
 
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -36,6 +37,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class UsuarioCadastroAtualizacaoIntegrationTest {
 
     private static final String EXPECTED_TEST_DATABASE = "arena_flyway_test";
+    private static final AtomicInteger IP_SEQUENCIA = new AtomicInteger();
 
     @Autowired
     private MockMvc mockMvc;
@@ -58,6 +60,8 @@ class UsuarioCadastroAtualizacaoIntegrationTest {
     @Autowired
     private org.flywaydb.core.Flyway flyway;
 
+    private JdbcTemplate migratorJdbc;
+
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private Usuario adminFixture;
@@ -66,6 +70,7 @@ class UsuarioCadastroAtualizacaoIntegrationTest {
     void verificarAmbienteDeTeste() {
         String dbName = jdbcTemplate.queryForObject("SELECT current_database()", String.class);
         assertEquals(EXPECTED_TEST_DATABASE, dbName, "Os testes devem rodar exclusivamente em " + EXPECTED_TEST_DATABASE);
+        migratorJdbc = new JdbcTemplate(flyway.getConfiguration().getDataSource());
     }
 
     private synchronized Usuario obterOuCriarAdminFixture() {
@@ -104,13 +109,18 @@ class UsuarioCadastroAtualizacaoIntegrationTest {
                     .filter(u -> u.getPerfil() == Perfil.ADMIN)
                     .findFirst()
                     .orElseGet(() -> {
-                        Usuario novoAdmin = new Usuario();
-                        novoAdmin.setNome("Admin Extra");
-                        novoAdmin.setEmail("admin_extra_" + UUID.randomUUID().toString().substring(0, 8) + "@exemplo.invalid");
-                        novoAdmin.setTelefone("11999998888");
-                        novoAdmin.setSenha(passwordEncoder.encode("adminSenha123!"));
-                        novoAdmin.setPerfil(Perfil.ADMIN);
-                        return usuarioRepository.save(novoAdmin);
+                        String sufixo = UUID.randomUUID().toString().substring(0, 8);
+                        Long id = migratorJdbc.queryForObject(
+                                """
+                                INSERT INTO public.usuario (nome, email, telefone, senha, perfil)
+                                VALUES ('Admin Extra', ?, '11999998888', ?, 'ADMIN')
+                                RETURNING id
+                                """,
+                                Long.class,
+                                "admin_extra_" + sufixo + "@exemplo.invalid",
+                                passwordEncoder.encode("adminSenha123!")
+                        );
+                        return usuarioRepository.findById(id).orElseThrow();
                     });
         }
         return adminFixture;
@@ -120,15 +130,35 @@ class UsuarioCadastroAtualizacaoIntegrationTest {
         return "Bearer " + jwtService.generateToken(usuario);
     }
 
+    /** IP distinto por requisição evita que o rate limit da V5 afete testes antigos. */
+    private static org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder
+            postCadastroComIpUnico() {
+        return post("/usuarios").with(request -> {
+            request.setRemoteAddr("198.51.100." + IP_SEQUENCIA.incrementAndGet());
+            return request;
+        });
+    }
+
     private Usuario criarUsuarioNoBanco(String prefixo, Perfil perfil, String senhaTexto) {
         String sufixo = UUID.randomUUID().toString().substring(0, 8);
-        Usuario usuario = new Usuario();
-        usuario.setNome("Usuario " + prefixo + " " + sufixo);
-        usuario.setEmail(prefixo.toLowerCase() + "_" + sufixo + "@exemplo.invalid");
-        usuario.setTelefone("11988887777");
-        usuario.setSenha(passwordEncoder.encode(senhaTexto));
-        usuario.setPerfil(perfil);
-        return usuarioRepository.save(usuario);
+        String email = prefixo.toLowerCase() + "_" + sufixo + "@exemplo.invalid";
+        String senhaHash = passwordEncoder.encode(senhaTexto);
+
+        Long id = migratorJdbc.queryForObject(
+                """
+                INSERT INTO public.usuario (nome, email, telefone, senha, perfil)
+                VALUES (?, ?, ?, ?, ?::varchar)
+                RETURNING id
+                """,
+                Long.class,
+                "Usuario " + prefixo + " " + sufixo,
+                email,
+                "11988887777",
+                senhaHash,
+                perfil.name()
+        );
+
+        return usuarioRepository.findById(id).orElseThrow();
     }
 
     @Test
@@ -143,7 +173,7 @@ class UsuarioCadastroAtualizacaoIntegrationTest {
                 }
                 """.formatted(sufixo, sufixo);
 
-        MvcResult result = mockMvc.perform(post("/usuarios")
+        MvcResult result = mockMvc.perform(postCadastroComIpUnico()
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(json))
                 .andExpect(status().isCreated())
@@ -158,6 +188,17 @@ class UsuarioCadastroAtualizacaoIntegrationTest {
         Usuario usuarioNoBanco = usuarioRepository.findById(id).orElseThrow();
         assertEquals(Perfil.CLIENTE, usuarioNoBanco.getPerfil(), "Cadastro público deve sempre criar perfil CLIENTE");
         assertTrue(passwordEncoder.matches("senhaSegura123!", usuarioNoBanco.getSenha()), "Senha deve ser armazenada com hash");
+
+        mockMvc.perform(post("/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                    "email": "%s",
+                                    "senha": "senhaSegura123!"
+                                }
+                                """.formatted(usuarioNoBanco.getEmail())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.token").isNotEmpty());
     }
 
     @Test
@@ -174,7 +215,7 @@ class UsuarioCadastroAtualizacaoIntegrationTest {
                 }
                 """.formatted(sufixo, sufixo);
 
-        MvcResult result = mockMvc.perform(post("/usuarios")
+        MvcResult result = mockMvc.perform(postCadastroComIpUnico()
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(jsonComPerfilAdmin))
                 .andExpect(status().isCreated())
@@ -191,7 +232,7 @@ class UsuarioCadastroAtualizacaoIntegrationTest {
     @Test
     void cadastroPublicoRejeitaDadosInvalidos() throws Exception {
         // Nome em branco
-        mockMvc.perform(post("/usuarios")
+        mockMvc.perform(postCadastroComIpUnico()
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -204,7 +245,7 @@ class UsuarioCadastroAtualizacaoIntegrationTest {
                 .andExpect(status().isBadRequest());
 
         // Email inválido
-        mockMvc.perform(post("/usuarios")
+        mockMvc.perform(postCadastroComIpUnico()
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -217,7 +258,7 @@ class UsuarioCadastroAtualizacaoIntegrationTest {
                 .andExpect(status().isBadRequest());
 
         // Senha curta (< 6 caracteres)
-        mockMvc.perform(post("/usuarios")
+        mockMvc.perform(postCadastroComIpUnico()
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -243,7 +284,7 @@ class UsuarioCadastroAtualizacaoIntegrationTest {
                 }
                 """.formatted(existente.getEmail());
 
-        mockMvc.perform(post("/usuarios")
+        mockMvc.perform(postCadastroComIpUnico()
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(json))
                 .andExpect(status().isBadRequest())

@@ -154,7 +154,7 @@ class AdminLifecycleStateIntegrationTest {
 
         Long stateCountBefore = adminCount();
 
-        runtimeJdbc.update(
+        migratorJdbc().update(
                 """
                 INSERT INTO public.usuario (nome, email, telefone, senha, perfil)
                 VALUES ('Cliente A', 'cliente.a@example.invalid', '000', 'hash', 'CLIENTE')
@@ -170,7 +170,7 @@ class AdminLifecycleStateIntegrationTest {
 
         Long stateCountBefore = adminCount();
 
-        runtimeJdbc.update(
+        migratorJdbc().update(
                 """
                 INSERT INTO public.usuario (nome, email, telefone, senha, perfil)
                 VALUES ('Admin Two', 'admin.two@example.invalid', '000', 'hash', 'ADMIN')
@@ -185,7 +185,7 @@ class AdminLifecycleStateIntegrationTest {
     void promoteClienteToAdminIncrementsAdminCount() {
         recoveryCreatesAdminAndClearsRecoveryFlag();
 
-        Long clienteId = runtimeJdbc.queryForObject(
+        Long clienteId = migratorJdbc().queryForObject(
                 """
                 INSERT INTO public.usuario (nome, email, telefone, senha, perfil)
                 VALUES ('Cliente B', 'cliente.b@example.invalid', '000', 'hash', 'CLIENTE')
@@ -196,7 +196,8 @@ class AdminLifecycleStateIntegrationTest {
 
         Long stateCountBefore = adminCount();
 
-        runtimeJdbc.update(
+        // V4.4: perfil só é alterado por arena_migrator (ou pela função do writer).
+        migratorJdbc().update(
                 "UPDATE public.usuario SET perfil = 'ADMIN' WHERE id = ?",
                 clienteId
         );
@@ -208,7 +209,7 @@ class AdminLifecycleStateIntegrationTest {
     void demoteAdminToClienteDecrementsCountWhenMoreThanOneAdmin() {
         recoveryCreatesAdminAndClearsRecoveryFlag();
 
-        runtimeJdbc.update(
+        migratorJdbc().update(
                 """
                 INSERT INTO public.usuario (nome, email, telefone, senha, perfil)
                 VALUES ('Admin Two', 'admin.two@example.invalid', '000', 'hash', 'ADMIN')
@@ -222,7 +223,7 @@ class AdminLifecycleStateIntegrationTest {
 
         Long stateCountBefore = adminCount();
 
-        runtimeJdbc.update(
+        migratorJdbc().update(
                 "UPDATE public.usuario SET perfil = 'CLIENTE' WHERE id = ?",
                 adminTwoId
         );
@@ -234,7 +235,7 @@ class AdminLifecycleStateIntegrationTest {
     void deleteAdminDecrementsCountWhenMoreThanOneAdmin() {
         recoveryCreatesAdminAndClearsRecoveryFlag();
 
-        runtimeJdbc.update(
+        migratorJdbc().update(
                 """
                 INSERT INTO public.usuario (nome, email, telefone, senha, perfil)
                 VALUES ('Admin Two', 'admin.two@example.invalid', '000', 'hash', 'ADMIN')
@@ -248,7 +249,18 @@ class AdminLifecycleStateIntegrationTest {
 
         Long stateCountBefore = adminCount();
 
-        runtimeJdbc.update(
+        // V4.2: o runtime não pode mais excluir usuario diretamente.
+        assertThrows(
+                DataAccessException.class,
+                () -> runtimeJdbc.update(
+                        "DELETE FROM public.usuario WHERE id = ?",
+                        adminTwoId
+                ),
+                "runtime must not be able to delete users directly after V4.2"
+        );
+
+        // O trigger de contagem continua sendo exercitado pela exclusão do migrator.
+        migratorJdbc().update(
                 "DELETE FROM public.usuario WHERE id = ?",
                 adminTwoId
         );
@@ -267,7 +279,7 @@ class AdminLifecycleStateIntegrationTest {
 
         DataAccessException error = assertThrows(
                 DataAccessException.class,
-                () -> runtimeJdbc.update(
+                () -> migratorJdbc().update(
                         "UPDATE public.usuario SET perfil = 'CLIENTE' WHERE id = ?",
                         onlyAdminId
                 )
@@ -288,9 +300,20 @@ class AdminLifecycleStateIntegrationTest {
                 Long.class
         );
 
-        DataAccessException error = assertThrows(
+        // V4.2: o runtime é bloqueado por privilégio antes de qualquer trigger.
+        assertThrows(
                 DataAccessException.class,
                 () -> runtimeJdbc.update(
+                        "DELETE FROM public.usuario WHERE id = ?",
+                        onlyAdminId
+                ),
+                "runtime must not be able to delete users directly after V4.2"
+        );
+
+        // A proteção do último ADMIN permanece como backstop no banco.
+        DataAccessException error = assertThrows(
+                DataAccessException.class,
+                () -> migratorJdbc().update(
                         "DELETE FROM public.usuario WHERE id = ?",
                         onlyAdminId
                 )
@@ -306,7 +329,7 @@ class AdminLifecycleStateIntegrationTest {
     void multiRowDemoteThatWouldLeaveZeroAdminsRollsBackEntireStatement() {
         recoveryCreatesAdminAndClearsRecoveryFlag();
 
-        runtimeJdbc.update(
+        migratorJdbc().update(
                 """
                 INSERT INTO public.usuario (nome, email, telefone, senha, perfil)
                 VALUES ('Admin Two', 'admin.two@example.invalid', '000', 'hash', 'ADMIN')
@@ -317,7 +340,7 @@ class AdminLifecycleStateIntegrationTest {
 
         DataAccessException error = assertThrows(
                 DataAccessException.class,
-                () -> runtimeJdbc.update(
+                () -> migratorJdbc().update(
                         "UPDATE public.usuario SET perfil = 'CLIENTE' WHERE perfil = 'ADMIN'"
                 )
         );
@@ -332,7 +355,7 @@ class AdminLifecycleStateIntegrationTest {
     void concurrentDemotionsCannotReduceAdminCountBelowOne() throws Exception {
         recoveryCreatesAdminAndClearsRecoveryFlag();
 
-        runtimeJdbc.update(
+        migratorJdbc().update(
                 """
                 INSERT INTO public.usuario (nome, email, telefone, senha, perfil)
                 VALUES ('Admin Two', 'admin.two@example.invalid', '000', 'hash', 'ADMIN')
@@ -351,7 +374,7 @@ class AdminLifecycleStateIntegrationTest {
         Future<?> future1 = executor.submit(() -> {
             latch.await();
             try {
-                runtimeJdbc.update(
+                migratorJdbc().update(
                         "UPDATE public.usuario SET perfil = 'CLIENTE' WHERE id = ?",
                         adminIds.get(0)
                 );
@@ -364,7 +387,7 @@ class AdminLifecycleStateIntegrationTest {
         Future<?> future2 = executor.submit(() -> {
             latch.await();
             try {
-                runtimeJdbc.update(
+                migratorJdbc().update(
                         "UPDATE public.usuario SET perfil = 'CLIENTE' WHERE id = ?",
                         adminIds.get(1)
                 );
@@ -473,6 +496,100 @@ class AdminLifecycleStateIntegrationTest {
         );
     }
 
+    @Test
+    void exclusaoPelaFuncaoDoWriterMantemContadorAdministrativoConsistente() {
+        recoveryCreatesAdminAndClearsRecoveryFlag();
+        Long actorId = runtimeJdbc.queryForObject(
+                "SELECT id FROM public.usuario WHERE perfil = 'ADMIN'", Long.class
+        );
+        String email = "admin.excluido.pela.funcao@example.invalid";
+        migratorJdbc().update(
+                """
+                INSERT INTO public.usuario (nome, email, telefone, senha, perfil)
+                VALUES ('Admin excluível', ?, '000', 'hash', 'ADMIN')
+                """,
+                email
+        );
+        Long targetId = runtimeJdbc.queryForObject(
+                "SELECT id FROM public.usuario WHERE email = ?", Long.class, email
+        );
+
+        long auditoriasAntes = migratorJdbc().queryForObject(
+                """
+                SELECT count(*) FROM public.admin_audit_event
+                WHERE operation = 'ADMIN_DELETE' AND outcome = 'SUCCEEDED'
+                """,
+                Long.class
+        );
+
+        String status = writerJdbc().queryForObject(
+                """
+                SELECT status FROM public.h04_admin_excluir_usuario(?, ?, ?, NULL, NULL, NULL)
+                """,
+                String.class,
+                actorId,
+                targetId,
+                "teste-estado-v42"
+        );
+
+        assertEquals("SUCCESS", status);
+        assertEquals(1L, countAdmins());
+        assertEquals(1L, adminCount(), "o trigger deve manter o singleton sincronizado");
+        assertEquals(0L, migratorJdbc().queryForObject(
+                "SELECT count(*) FROM public.usuario WHERE id = ?", Long.class, targetId
+        ));
+        assertEquals(auditoriasAntes + 1, migratorJdbc().queryForObject(
+                """
+                SELECT count(*) FROM public.admin_audit_event
+                WHERE operation = 'ADMIN_DELETE' AND outcome = 'SUCCEEDED'
+                  AND target_user_id = ?
+                """,
+                Long.class,
+                targetId
+        ));
+    }
+
+    @Test
+    void rejeicaoLastAdminDaFuncaoNaoAlteraContadorEPersisteAuditoria() {
+        recoveryCreatesAdminAndClearsRecoveryFlag();
+        Long unicoAdminId = runtimeJdbc.queryForObject(
+                "SELECT id FROM public.usuario WHERE perfil = 'ADMIN'", Long.class
+        );
+        long auditoriasAntes = migratorJdbc().queryForObject(
+                """
+                SELECT count(*) FROM public.admin_audit_event
+                WHERE operation = 'ADMIN_DELETE' AND outcome = 'REJECTED' AND error_code = 'LAST_ADMIN'
+                """,
+                Long.class
+        );
+
+        String status = writerJdbc().queryForObject(
+                """
+                SELECT status FROM public.h04_admin_excluir_usuario(?, ?, ?, NULL, NULL, NULL)
+                """,
+                String.class,
+                unicoAdminId,
+                unicoAdminId,
+                "teste-estado-v42"
+        );
+
+        assertEquals("LAST_ADMIN", status);
+        assertEquals(1L, countAdmins());
+        assertEquals(1L, adminCount());
+        assertEquals(1L, migratorJdbc().queryForObject(
+                "SELECT count(*) FROM public.usuario WHERE id = ?", Long.class, unicoAdminId
+        ));
+        assertEquals(auditoriasAntes + 1, migratorJdbc().queryForObject(
+                """
+                SELECT count(*) FROM public.admin_audit_event
+                WHERE operation = 'ADMIN_DELETE' AND outcome = 'REJECTED'
+                  AND error_code = 'LAST_ADMIN' AND target_user_id = ?
+                """,
+                Long.class,
+                unicoAdminId
+        ));
+    }
+
     private Long countAdmins() {
         return runtimeJdbc.queryForObject(
                 "SELECT COUNT(*) FROM public.usuario WHERE perfil = 'ADMIN'",
@@ -494,6 +611,10 @@ class AdminLifecycleStateIntegrationTest {
 
     private JdbcTemplate offlineJdbc() {
         return new JdbcTemplate(roleDataSource("TEST_POSTGRES_OFFLINE_USERNAME", "TEST_POSTGRES_OFFLINE_PASSWORD"));
+    }
+
+    private JdbcTemplate writerJdbc() {
+        return new JdbcTemplate(roleDataSource("TEST_POSTGRES_WRITER_USERNAME", "TEST_POSTGRES_WRITER_PASSWORD"));
     }
 
     private DataSource roleDataSource(String usernameVariable, String passwordVariable) {

@@ -4,7 +4,10 @@ import br.com.arena.dto.usuario.*;
 import br.com.arena.exception.ConflictException;
 import br.com.arena.exception.ResourceNotFoundException;
 import br.com.arena.model.Usuario;
+import br.com.arena.security.ClientIdentityResolver;
 import br.com.arena.security.SecurityUtils;
+import jakarta.servlet.http.HttpServletRequest;
+import br.com.arena.service.PasswordChangeService;
 import br.com.arena.service.UsuarioService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -19,9 +22,15 @@ import java.util.List;
 public class UsuarioController {
 
     private final UsuarioService usuarioService;
+    private final PasswordChangeService passwordChangeService;
+    private final ClientIdentityResolver identityResolver;
 
-    public UsuarioController(UsuarioService usuarioService) {
+    public UsuarioController(UsuarioService usuarioService,
+                             PasswordChangeService passwordChangeService,
+                             ClientIdentityResolver identityResolver) {
         this.usuarioService = usuarioService;
+        this.passwordChangeService = passwordChangeService;
+        this.identityResolver = identityResolver;
     }
 
     @GetMapping
@@ -42,6 +51,15 @@ public class UsuarioController {
 
         Usuario usuarioLogado = SecurityUtils.getUsuarioLogado();
         return usuarioService.atualizarDadosPessoais(usuarioLogado.getId(), dto);
+    }
+
+    @PatchMapping("/me/senha")
+    @PreAuthorize("isAuthenticated()")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void alterarSenha(@Valid @RequestBody AlterarSenhaDTO dto,
+                             HttpServletRequest request) {
+        // IP pelo resolvedor existente: XFF só é aceito com proxy confiável.
+        passwordChangeService.alterarSenha(dto, identityResolver.resolve(request));
     }
 
     @GetMapping("/{id}")

@@ -117,6 +117,29 @@ public class GlobalExceptionHandler {
 
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(erro);
     }
+    @ExceptionHandler(TooManyRequestsException.class)
+    public ResponseEntity<ErrorResponse> tratarLimiteExcedido(
+            TooManyRequestsException ex) {
+        long retryAfter = Math.max(1L, ex.getRetryAfterSeconds());
+        ErrorResponse erro = new ErrorResponse(
+                LocalDateTime.now(),
+                HttpStatus.TOO_MANY_REQUESTS.value(),
+                "Limite de requisições excedido. Tente novamente mais tarde."
+        );
+        ResponseEntity.BodyBuilder builder = ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header(HttpHeaders.RETRY_AFTER, Long.toString(retryAfter));
+
+        RateLimitSource source = ex.getSource();
+        if (source != null) {
+            builder.header(RateLimitSource.HEADER_NAME, source.headerValue());
+        } else {
+            log.warn("TooManyRequestsException sem RateLimitSource; cabeçalho {} omitido.",
+                    RateLimitSource.HEADER_NAME);
+        }
+
+        return builder.body(erro);
+    }
+
     @ExceptionHandler(org.springframework.security.access.AccessDeniedException.class)
     public ResponseEntity<ErrorResponse> tratarAcessoNegado(
             org.springframework.security.access.AccessDeniedException ex) {

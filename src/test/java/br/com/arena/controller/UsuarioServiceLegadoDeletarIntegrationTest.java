@@ -14,6 +14,7 @@ import br.com.arena.repository.AgendamentoRepository;
 import br.com.arena.repository.QuadraRepository;
 import br.com.arena.repository.UsuarioRepository;
 import br.com.arena.service.AdminLifecycleDbService;
+import br.com.arena.service.AdminWriterJdbcService;
 import br.com.arena.service.UsuarioService;
 import br.com.arena.testsupport.IsolatedPostgresIntegrationTest;
 import br.com.arena.testsupport.TestPostgresSettings;
@@ -38,11 +39,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doAnswer;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 
 @IsolatedPostgresIntegrationTest
@@ -79,6 +81,9 @@ class UsuarioServiceLegadoDeletarIntegrationTest {
     @MockitoSpyBean(reset = MockReset.AFTER)
     private AdminLifecycleDbService adminLifecycleDbServiceSpy;
 
+    @MockitoSpyBean(reset = MockReset.AFTER)
+    private AdminWriterJdbcService adminWriterJdbcServiceSpy;
+
     @BeforeEach
     void setup() {
         migratorJdbc = new JdbcTemplate(flyway.getConfiguration().getDataSource());
@@ -99,8 +104,10 @@ class UsuarioServiceLegadoDeletarIntegrationTest {
         if (admins.size() > 1) {
             for (int i = 1; i < admins.size(); i++) {
                 Usuario extra = admins.get(i);
-                extra.setPerfil(Perfil.CLIENTE);
-                usuarioRepository.saveAndFlush(extra);
+                migratorJdbc.update(
+                        "UPDATE public.usuario SET perfil = 'CLIENTE' WHERE id = ?",
+                        extra.getId()
+                );
             }
         }
     }
@@ -142,13 +149,21 @@ class UsuarioServiceLegadoDeletarIntegrationTest {
 
     private Usuario criarUsuario(String prefixo, Perfil perfil) {
         String sufixo = UUID.randomUUID().toString().substring(0, 8);
-        Usuario u = new Usuario();
-        u.setNome("Usuario " + prefixo + " " + sufixo);
-        u.setEmail(prefixo.toLowerCase() + "_" + sufixo + "@exemplo.invalid");
-        u.setTelefone("11988887777");
-        u.setSenha(passwordEncoder.encode("senha123!"));
-        u.setPerfil(perfil);
-        return usuarioRepository.saveAndFlush(u);
+        Long id = migratorJdbc.queryForObject(
+                """
+                INSERT INTO public.usuario (nome, email, telefone, senha, perfil)
+                VALUES (?, ?, ?, ?, ?::varchar)
+                RETURNING id
+                """,
+                Long.class,
+                "Usuario " + prefixo + " " + sufixo,
+                prefixo.toLowerCase() + "_" + sufixo + "@exemplo.invalid",
+                "11988887777",
+                passwordEncoder.encode("senha123!"),
+                perfil.name()
+        );
+
+        return usuarioRepository.findById(id).orElseThrow();
     }
 
     private void autenticarComo(Usuario usuario) {
@@ -264,12 +279,12 @@ class UsuarioServiceLegadoDeletarIntegrationTest {
     }
 
     /**
-     * Teste 4b: LastAdminException ATRAVESSA o limite transacional externo.
-     * O noRollbackFor de deletar(Long) atua somente na participação interna. Ao propagar,
-     * a política padrão do TransactionTemplate externo prevalece e reverte a auditoria.
+     * Teste 4b (Etapa 3): LastAdminException ATRAVESSA o limite transacional externo,
+     * mas a auditoria da função permanece commitada porque o writer usa
+     * PROPAGATION_REQUIRES_NEW em datasource independente.
      */
     @Test
-    void lastAdminExceptionAtravessaLimiteTransacionalExternoEProvocaRollbackDaAuditoria() {
+    void lastAdminExceptionAtravessaLimiteTransacionalExternoEAuditoriaPermaneceCommitada() {
         Usuario ultimoAdmin = obterPrimeiroAdmin();
         autenticarComo(ultimoAdmin);
 
@@ -287,7 +302,7 @@ class UsuarioServiceLegadoDeletarIntegrationTest {
                         usuarioService.deletar(ultimoAdmin.getId());
                     } catch (LastAdminException ex) {
                         assertFalse(status.isRollbackOnly(),
-                                "O noRollbackFor interno não marca a transação participante como rollback-only");
+                                "A transação externa não é marcada como rollback-only pelo serviço");
                         throw ex;
                     }
                     return null;
@@ -300,8 +315,8 @@ class UsuarioServiceLegadoDeletarIntegrationTest {
                 Long.class,
                 ultimoAdmin.getId()
         );
-        assertEquals(contadorAntes, depois != null ? depois : 0L,
-                "Ao propagar pelo limite externo, a regra padrão de rollback reverte também a auditoria");
+        assertEquals(contadorAntes + 1L, depois != null ? depois : 0L,
+                "A auditoria LAST_ADMIN foi commitada pelo writer antes da exceção HTTP");
         assertTrue(usuarioRepository.existsById(ultimoAdmin.getId()),
                 "O último ADMIN permanece persistido após o rollback externo");
     }
@@ -338,14 +353,10 @@ class UsuarioServiceLegadoDeletarIntegrationTest {
     }
 
     /**
-     * Teste LAC-05 (complementação): rollback técnico real em alterarPerfil().
-     * <p>
-     * Invoca UsuarioService#alterarPerfil e injeta uma falha técnica controlada
-     * por spy logo após o saveAndFlush() e o registro real da auditoria
-     * PROMOTE/SUCCEEDED, ainda antes do commit. Nenhuma lógica de falha é
-     * adicionada ao código de produção.
-     * Verifica, por conexão independente, que perfil, auditoria e estado
-     * administrativo foram revertidos e que o advisory lock foi liberado.
+     * Teste LAC-05 (adaptado à V4.3): uma falha técnica antes da chamada da função
+     * do writer não pode deixar mutação, auditoria, estado inconsistente ou lock retido.
+     * A mutação e a auditoria agora são atômicas dentro da função SECURITY DEFINER;
+     * não há mais ponto na aplicação para injetar falha entre elas.
      */
     @Test
     void rollbackTecnicoPreservaPerfisEAuditoriaConsistente() {
@@ -353,35 +364,15 @@ class UsuarioServiceLegadoDeletarIntegrationTest {
         Usuario clienteAlvo = criarUsuario("cliente_rollback", Perfil.CLIENTE);
         autenticarComo(adminOperador);
 
-        Long auditoriaAntes = migratorJdbc.queryForObject(
+        long contAuditoriaAntes = migratorJdbc.queryForObject(
                 "SELECT count(*) FROM public.admin_audit_event WHERE target_user_id = ? AND operation = 'PROMOTE' AND outcome = 'SUCCEEDED'",
                 Long.class,
                 clienteAlvo.getId()
         );
-        long contAuditoriaAntes = auditoriaAntes != null ? auditoriaAntes : 0L;
 
         RuntimeException falhaSimulada = new RuntimeException("Falha técnica inesperada simulada (LAC-05)");
-
-        doAnswer(invocation -> {
-            // saveAndFlush() já ocorreu: a mutação deve estar visível na transação.
-            String perfilDuranteTransacao = jdbcTemplate.queryForObject(
-                    "SELECT perfil FROM public.usuario WHERE id = ?",
-                    String.class,
-                    clienteAlvo.getId()
-            );
-            assertEquals("ADMIN", perfilDuranteTransacao,
-                    "A mutação de perfil deve ocorrer antes da falha, dentro da transação");
-
-            // Executa o registro real de auditoria e só então provoca a falha técnica.
-            // arena_runtime não tem SELECT em admin_audit_event (DB-02); o retorno
-            // não nulo do SECURITY DEFINER comprova a inserção na transação.
-            Object idEvento = invocation.callRealMethod();
-            assertNotNull(idEvento, "O evento de auditoria deve ser inserido antes da falha");
-
-            throw falhaSimulada;
-        }).when(adminLifecycleDbServiceSpy).registrarAuditoria(
-                any(), any(), any(), any(), any(), any(), any(), any(),
-                any(), any(), any(), any(), any(), any()
+        doThrow(falhaSimulada).when(adminWriterJdbcServiceSpy).alterarPerfil(
+                anyLong(), anyLong(), any(), any(), any(), any(), any()
         );
 
         RuntimeException lancada = assertThrows(RuntimeException.class,
@@ -389,13 +380,12 @@ class UsuarioServiceLegadoDeletarIntegrationTest {
                         clienteAlvo.getId(),
                         UsuarioPerfilDTO.builder().perfil(Perfil.ADMIN).build()
                 ),
-                "A falha técnica injetada deve interromper alterarPerfil() antes do commit"
+                "A falha técnica injetada deve interromper alterarPerfil()"
         );
         assertEquals("Falha técnica inesperada simulada (LAC-05)", lancada.getMessage());
 
-        verify(adminLifecycleDbServiceSpy).registrarAuditoria(
-                any(), any(), any(), any(), any(), any(), any(), any(),
-                any(), any(), any(), any(), any(), any()
+        verify(adminWriterJdbcServiceSpy).alterarPerfil(
+                anyLong(), anyLong(), any(), any(), any(), any(), any()
         );
 
         String perfilPersistido = migratorJdbc.queryForObject(
@@ -404,9 +394,7 @@ class UsuarioServiceLegadoDeletarIntegrationTest {
                 clienteAlvo.getId()
         );
         assertEquals("CLIENTE", perfilPersistido,
-                "O rollback deve preservar o perfil original");
-        assertNotEquals("ADMIN", perfilPersistido,
-                "A mutação para ADMIN não pode sobreviver ao rollback");
+                "A falha técnica não pode promover o usuário");
 
         Long auditoriaDepois = migratorJdbc.queryForObject(
                 "SELECT count(*) FROM public.admin_audit_event WHERE target_user_id = ? AND operation = 'PROMOTE' AND outcome = 'SUCCEEDED'",
@@ -414,7 +402,7 @@ class UsuarioServiceLegadoDeletarIntegrationTest {
                 clienteAlvo.getId()
         );
         assertEquals(contAuditoriaAntes, auditoriaDepois != null ? auditoriaDepois : 0L,
-                "O evento PROMOTE/SUCCEEDED inserido na transação revertida não pode ser persistido");
+                "Nenhum evento PROMOTE/SUCCEEDED pode ser persistido");
 
         Map<String, Object> estado = migratorJdbc.queryForMap(
                 "SELECT p_admin_count, p_bootstrap_consumed, p_recovery_required FROM public.h04_get_admin_lifecycle_state()"
@@ -424,7 +412,7 @@ class UsuarioServiceLegadoDeletarIntegrationTest {
                 Long.class
         );
         assertEquals(((Number) estado.get("p_admin_count")).longValue(), adminCountReal != null ? adminCountReal : 0L,
-                "O estado administrativo deve permanecer consistente após o rollback");
+                "O estado administrativo deve permanecer consistente após a falha");
         assertEquals(Boolean.TRUE, estado.get("p_bootstrap_consumed"));
         assertEquals(Boolean.FALSE, estado.get("p_recovery_required"));
 
@@ -440,24 +428,25 @@ class UsuarioServiceLegadoDeletarIntegrationTest {
                 AdminLifecycleDbService.ADMIN_LIFECYCLE_LOCK_KEY
         );
         assertEquals(0L, locksRetidos != null ? locksRetidos : 0L,
-                "O advisory lock não pode permanecer retido após o rollback");
+                "O advisory lock não pode permanecer retido após a falha");
     }
 
     /**
-     * Teste 7: Comprova que o advisory lock 7409395520021 permanece ativo durante a operação do método legado.
+     * Teste 7 (Etapa 3): o método legado delega à função do writer, que adquire o
+     * mesmo advisory lock; a exclusão aguarda até que a outra sessão o libere.
      */
     @Test
-    void advisoryLockPermaneceAtivoDuranteOperacaoDoMetodoLegado() throws Exception {
+    void operacaoDoMetodoLegadoAguardaAdvisoryLockDaFuncao() throws Exception {
         Usuario adminOperador = obterPrimeiroAdmin();
         Usuario adminAlvo = criarUsuario("admin_lock_test", Perfil.ADMIN);
 
         ExecutorService executorA = Executors.newSingleThreadExecutor();
-        CountDownLatch lockAcquiredByALatch = new CountDownLatch(1);
-        CountDownLatch bPidCapturedLatch = new CountDownLatch(1);
-        AtomicLong pidA = new AtomicLong();
-        AtomicLong pidB = new AtomicLong();
+        ExecutorService executorB = Executors.newSingleThreadExecutor();
+        CountDownLatch lockAcquired = new CountDownLatch(1);
+        CountDownLatch liberarLock = new CountDownLatch(1);
+        CountDownLatch exclusaoConcluida = new CountDownLatch(1);
+        AtomicReference<Throwable> falhaExclusao = new AtomicReference<>();
 
-        // Thread A adquire o lock primeiro em transação manual e registra seu PID
         Future<?> futureA = executorA.submit(() -> {
             org.springframework.transaction.support.DefaultTransactionDefinition def =
                     new org.springframework.transaction.support.DefaultTransactionDefinition();
@@ -465,58 +454,10 @@ class UsuarioServiceLegadoDeletarIntegrationTest {
             org.springframework.transaction.TransactionStatus status = transactionManager.getTransaction(def);
 
             try {
-                jdbcTemplate.execute("SELECT pg_advisory_xact_lock(" + AdminLifecycleDbService.ADMIN_LIFECYCLE_LOCK_KEY + ")");
-                Integer pidAValue = jdbcTemplate.queryForObject("SELECT pg_backend_pid()", Integer.class);
-                assertNotNull(pidAValue, "PID da sessão de A deve estar disponível");
-                pidA.set(pidAValue.longValue());
-
-                Long locksA = jdbcTemplate.queryForObject(
-                        """
-                        SELECT count(*) FROM pg_locks
-                        WHERE pid = ?
-                          AND locktype = 'advisory'
-                          AND ((classid::bigint << 32) | objid::bigint) = ?
-                          AND objsubid = 1
-                          AND granted = true
-                        """,
-                        Long.class,
-                        pidA.get(),
-                        AdminLifecycleDbService.ADMIN_LIFECYCLE_LOCK_KEY
-                );
-                assertEquals(1L, locksA != null ? locksA : 0L,
-                        "A sessão de A deve ser a detentora do advisory lock");
-
-                lockAcquiredByALatch.countDown();
-
-                assertTrue(bPidCapturedLatch.await(5, TimeUnit.SECONDS), "Thread B deve registrar seu PID");
-
-                // Comprova que a sessão específica de Thread B está bloqueada no advisory lock
-                boolean bBloqueado = false;
-                long deadline = System.currentTimeMillis() + 10000;
-                while (System.currentTimeMillis() < deadline) {
-                    Integer waiting = jdbcTemplate.queryForObject(
-                            """
-                            SELECT count(*) FROM pg_locks
-                            WHERE pid = ?
-                              AND locktype = 'advisory'
-                              AND ((classid::bigint << 32) | objid::bigint) = ?
-                              AND objsubid = 1
-                              AND NOT granted
-                            """,
-                            Integer.class,
-                            pidB.get(),
-                            AdminLifecycleDbService.ADMIN_LIFECYCLE_LOCK_KEY
-                    );
-                    if (waiting != null && waiting > 0) {
-                        bBloqueado = true;
-                        break;
-                    }
-                    Thread.sleep(50);
-                }
-                assertTrue(bBloqueado,
-                        "A sessão " + pidB.get() + " de B deve estar bloqueada no advisory lock 7409395520021");
-
-                // Libera o lock commitando
+                jdbcTemplate.execute("SELECT pg_advisory_xact_lock("
+                        + AdminLifecycleDbService.ADMIN_LIFECYCLE_LOCK_KEY + ")");
+                lockAcquired.countDown();
+                assertTrue(liberarLock.await(10, TimeUnit.SECONDS), "O teste deve liberar o lock");
                 transactionManager.commit(status);
             } catch (Throwable ex) {
                 if (!status.isCompleted()) {
@@ -526,30 +467,37 @@ class UsuarioServiceLegadoDeletarIntegrationTest {
             }
         });
 
-        assertTrue(lockAcquiredByALatch.await(5, TimeUnit.SECONDS), "Thread A deve adquirir o lock");
+        try {
+            assertTrue(lockAcquired.await(5, TimeUnit.SECONDS), "Thread A deve adquirir o lock");
 
-        // Captura o PID dentro do adquirirLock() do próprio serviço, sem transação externa.
-        doAnswer(invocation -> {
-            Integer pidBValue = jdbcTemplate.queryForObject("SELECT pg_backend_pid()", Integer.class);
-            assertNotNull(pidBValue, "PID da sessão de B deve estar disponível");
-            pidB.set(pidBValue.longValue());
-            bPidCapturedLatch.countDown();
-            return invocation.callRealMethod();
-        }).when(adminLifecycleDbServiceSpy).adquirirLock();
+            Future<?> futureB = executorB.submit(() -> {
+                try {
+                    autenticarComo(adminOperador);
+                    usuarioService.deletar(adminAlvo.getId());
+                } catch (Throwable ex) {
+                    falhaExclusao.set(ex);
+                } finally {
+                    exclusaoConcluida.countDown();
+                }
+            });
 
-        // Thread B: chama o método legado usuarioService.deletar
-        ExecutorService executorB = Executors.newSingleThreadExecutor();
-        Future<?> futureB = executorB.submit(() -> {
-            autenticarComo(adminOperador);
-            usuarioService.deletar(adminAlvo.getId());
-        });
+            assertFalse(exclusaoConcluida.await(500, TimeUnit.MILLISECONDS),
+                    "A operação deve aguardar o advisory lock detido por outra sessão");
 
-        futureA.get(15, TimeUnit.SECONDS);
-        futureB.get(15, TimeUnit.SECONDS);
+            liberarLock.countDown();
 
-        executorA.shutdown();
-        executorB.shutdown();
+            assertTrue(exclusaoConcluida.await(10, TimeUnit.SECONDS),
+                    "A operação deve concluir após a liberação do lock");
+            futureA.get(15, TimeUnit.SECONDS);
+            futureB.get(15, TimeUnit.SECONDS);
+            assertNull(falhaExclusao.get());
+        } finally {
+            liberarLock.countDown();
+            executorA.shutdownNow();
+            executorB.shutdownNow();
+        }
 
-        assertFalse(usuarioRepository.existsById(adminAlvo.getId()), "O administrador alvo deve ser excluído após Thread B adquirir o lock");
+        assertFalse(usuarioRepository.existsById(adminAlvo.getId()),
+                "O administrador alvo deve ser excluído após a liberação do lock");
     }
 }

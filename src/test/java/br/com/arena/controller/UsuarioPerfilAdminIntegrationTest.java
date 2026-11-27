@@ -47,7 +47,6 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.doAnswer;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -83,6 +82,8 @@ class UsuarioPerfilAdminIntegrationTest {
     @Autowired
     private Flyway flyway;
 
+    private JdbcTemplate migratorJdbc;
+
     @MockitoSpyBean(reset = MockReset.AFTER)
     private AdminLifecycleDbService adminLifecycleDbService;
 
@@ -98,6 +99,9 @@ class UsuarioPerfilAdminIntegrationTest {
     void setupBanco() {
         String dbName = jdbcTemplate.queryForObject("SELECT current_database()", String.class);
         assertEquals(EXPECTED_TEST_DATABASE, dbName, "Os testes devem rodar exclusivamente em " + EXPECTED_TEST_DATABASE);
+        migratorJdbc = new JdbcTemplate(flyway.getConfiguration().getDataSource());
+        migratorJdbc.setQueryTimeout(5);
+        jdbcTemplate.setQueryTimeout(10);
         garantirEstadoAtivoComAdmin();
         limparAdminsSobressalentes();
     }
@@ -115,14 +119,17 @@ class UsuarioPerfilAdminIntegrationTest {
         if (admins.size() > 1) {
             for (int i = 1; i < admins.size(); i++) {
                 Usuario extra = admins.get(i);
-                extra.setPerfil(Perfil.CLIENTE);
-                usuarioRepository.saveAndFlush(extra);
+                migratorJdbc.update(
+                        "UPDATE public.usuario SET perfil = 'CLIENTE' WHERE id = ?",
+                        extra.getId()
+                );
             }
         }
     }
 
     private synchronized void garantirEstadoAtivoComAdmin() {
         JdbcTemplate migratorJdbc = new JdbcTemplate(flyway.getConfiguration().getDataSource());
+        migratorJdbc.setQueryTimeout(5);
         Map<String, Object> state = migratorJdbc.queryForMap(
                 "SELECT bootstrap_consumed, recovery_required, admin_count FROM public.admin_lifecycle_state WHERE singleton_id = 1"
         );
@@ -135,6 +142,7 @@ class UsuarioPerfilAdminIntegrationTest {
             offlineDs.setUsername(settings.offlineUsername());
             offlineDs.setPassword(settings.offlinePassword());
             JdbcTemplate offlineJdbc = new JdbcTemplate(offlineDs);
+            offlineJdbc.setQueryTimeout(5);
 
             String senhaHash = passwordEncoder.encode("adminMaster123!");
             offlineJdbc.queryForObject(
@@ -163,13 +171,32 @@ class UsuarioPerfilAdminIntegrationTest {
 
     private Usuario criarUsuario(String prefixo, Perfil perfil) {
         String sufixo = UUID.randomUUID().toString().substring(0, 8);
-        Usuario u = new Usuario();
-        u.setNome("Usuario " + prefixo + " " + sufixo);
-        u.setEmail(prefixo.toLowerCase() + "_" + sufixo + "@exemplo.invalid");
-        u.setTelefone("11988887777");
-        u.setSenha(passwordEncoder.encode("senha123!"));
-        u.setPerfil(perfil);
-        return usuarioRepository.saveAndFlush(u);
+        String nome = "Usuario " + prefixo + " " + sufixo;
+        String email = prefixo.toLowerCase() + "_" + sufixo + "@exemplo.invalid";
+        String telefone = "11988887777";
+        String senhaHash = passwordEncoder.encode("senha123!");
+
+        JdbcTemplate migratorJdbc = new JdbcTemplate(flyway.getConfiguration().getDataSource());
+        Long id = migratorJdbc.queryForObject(
+                """
+                INSERT INTO public.usuario (nome, email, telefone, senha, perfil)
+                VALUES (?, ?, ?, ?, ?::varchar)
+                RETURNING id
+                """,
+                Long.class,
+                nome,
+                email,
+                telefone,
+                senhaHash,
+                perfil.name()
+        );
+
+        // Constrói o objeto diretamente com os dados já inseridos pelo arena_migrator.
+        // O objeto resultante fica detached (fora do contexto JPA) — o Hibernate não
+        // tentará emitir INSERT ou UPDATE por essa referência. Isso preserva a restrição
+        // arquitetural de que arena_runtime não possui INSERT direto na tabela usuario
+        // (revogado pela migration V4_1__registro_cliente_seguro.sql).
+        return new Usuario(id, nome, email, telefone, senhaHash, perfil, 0L, List.of());
     }
 
     private void autenticarComo(Usuario usuario) {
@@ -180,6 +207,7 @@ class UsuarioPerfilAdminIntegrationTest {
 
     private long contarAuditorias(String operation, String outcome) {
         JdbcTemplate migratorJdbc = new JdbcTemplate(flyway.getConfiguration().getDataSource());
+        migratorJdbc.setQueryTimeout(5);
         Long count = migratorJdbc.queryForObject(
                 "SELECT count(*) FROM public.admin_audit_event WHERE operation = ? AND outcome = ?",
                 Long.class,
@@ -191,6 +219,7 @@ class UsuarioPerfilAdminIntegrationTest {
 
     private long contarAuditoriasComErrorCode(String operation, String outcome, String errorCode) {
         JdbcTemplate migratorJdbc = new JdbcTemplate(flyway.getConfiguration().getDataSource());
+        migratorJdbc.setQueryTimeout(5);
         Long count = migratorJdbc.queryForObject(
                 "SELECT count(*) FROM public.admin_audit_event WHERE operation = ? AND outcome = ? AND error_code = ?",
                 Long.class,
@@ -263,8 +292,10 @@ class UsuarioPerfilAdminIntegrationTest {
         if (admins.size() > 1) {
             for (int i = 1; i < admins.size(); i++) {
                 Usuario extra = admins.get(i);
-                extra.setPerfil(Perfil.CLIENTE);
-                usuarioRepository.saveAndFlush(extra);
+                migratorJdbc.update(
+                        "UPDATE public.usuario SET perfil = 'CLIENTE' WHERE id = ?",
+                        extra.getId()
+                );
             }
         }
 
@@ -306,8 +337,10 @@ class UsuarioPerfilAdminIntegrationTest {
         if (admins.size() > 1) {
             for (int i = 1; i < admins.size(); i++) {
                 Usuario extra = admins.get(i);
-                extra.setPerfil(Perfil.CLIENTE);
-                usuarioRepository.saveAndFlush(extra);
+                migratorJdbc.update(
+                        "UPDATE public.usuario SET perfil = 'CLIENTE' WHERE id = ?",
+                        extra.getId()
+                );
             }
         }
 
@@ -477,8 +510,11 @@ class UsuarioPerfilAdminIntegrationTest {
             }
         });
 
-        assertTrue(latch.await(10, TimeUnit.SECONDS), "Operações concorrentes devem terminar em 10s");
-        executor.shutdown();
+        try {
+            assertTrue(latch.await(10, TimeUnit.SECONDS), "Operações concorrentes devem terminar em 10s");
+        } finally {
+            executor.shutdownNow();
+        }
 
         // Verificações essenciais:
         // Pelo menos uma das tentativas DEVE ter sido rejeitada (409 Conflict pelo lock ou 403 por revogação de credenciais)
@@ -527,8 +563,11 @@ class UsuarioPerfilAdminIntegrationTest {
             });
         }
 
-        assertTrue(latch.await(10, TimeUnit.SECONDS), "Operações concorrentes devem terminar em 10s");
-        executor.shutdown();
+        try {
+            assertTrue(latch.await(10, TimeUnit.SECONDS), "Operações concorrentes devem terminar em 10s");
+        } finally {
+            executor.shutdownNow();
+        }
 
         assertEquals(2, statusCodes.size());
         assertTrue(statusCodes.stream().allMatch(s -> s == 409),
@@ -543,12 +582,15 @@ class UsuarioPerfilAdminIntegrationTest {
         migratorJdbc.update("UPDATE public.admin_lifecycle_state SET admin_count = 9999 WHERE singleton_id = 1");
 
         try {
+            // V4.5: o runtime não possui mais EXECUTE na função de leitura do estado;
+            // o helper é exercitado pela conexão do arena_migrator (dono do objeto).
+            AdminLifecycleDbService migratorLifecycle = new AdminLifecycleDbService(migratorJdbc);
             assertThrows(IllegalStateException.class, () -> {
-                adminLifecycleDbService.validarConsistenciaOuFalhar();
+                migratorLifecycle.validarConsistenciaOuFalhar();
             }, "Divergência entre admin_count e contagem real deve provocar IllegalStateException (fail-closed)");
         } finally {
             // Restaurar coerência para não quebrar outros testes
-            long real = adminLifecycleDbService.contarAdminsReais();
+            long real = new AdminLifecycleDbService(migratorJdbc).contarAdminsReais();
             migratorJdbc.update("UPDATE public.admin_lifecycle_state SET admin_count = ? WHERE singleton_id = 1", real);
         }
     }
@@ -723,8 +765,11 @@ class UsuarioPerfilAdminIntegrationTest {
             }
         });
 
-        assertTrue(latch.await(15, TimeUnit.SECONDS), "Operações concorrentes devem terminar em 15s");
-        executor.shutdown();
+        try {
+            assertTrue(latch.await(15, TimeUnit.SECONDS), "Operações concorrentes devem terminar em 15s");
+        } finally {
+            executor.shutdownNow();
+        }
 
         assertEquals(2, statusCodes.size(), "Devem existir exatamente 2 respostas HTTP");
 
@@ -771,27 +816,31 @@ class UsuarioPerfilAdminIntegrationTest {
 
         ExecutorService executorA = Executors.newSingleThreadExecutor();
         CountDownLatch lockAcquiredByALatch = new CountDownLatch(1);
-        CountDownLatch bPidCapturedLatch = new CountDownLatch(1);
         AtomicLong pidA = new AtomicLong();
-        AtomicLong pidB = new AtomicLong();
+
+        // V4.4: o runtime não tem mais UPDATE em perfil. A preparação é feita por
+        // arena_migrator, na mesmíssima conexão/transação que detém o advisory lock.
+        org.springframework.jdbc.datasource.DataSourceTransactionManager migratorTxManager =
+                new org.springframework.jdbc.datasource.DataSourceTransactionManager(
+                        flyway.getConfiguration().getDataSource());
 
         List<Integer> statusCodesB = new CopyOnWriteArrayList<>();
 
-        // Thread de ADMIN A
+        // Thread de preparação (arena_migrator)
         Future<?> futureA = executorA.submit(() -> {
             org.springframework.transaction.support.DefaultTransactionDefinition def =
                     new org.springframework.transaction.support.DefaultTransactionDefinition();
             def.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-            org.springframework.transaction.TransactionStatus status = transactionManager.getTransaction(def);
+            org.springframework.transaction.TransactionStatus status = migratorTxManager.getTransaction(def);
 
             try {
-                // 1. ADMIN A adquire o lock advisory e registra o PID da própria sessão
-                jdbcTemplate.execute("SELECT pg_advisory_xact_lock(" + AdminLifecycleDbService.ADMIN_LIFECYCLE_LOCK_KEY + ")");
-                Integer pidAValue = jdbcTemplate.queryForObject("SELECT pg_backend_pid()", Integer.class);
-                assertNotNull(pidAValue, "PID da sessão de A deve estar disponível");
+                // 1. Obtém o lock advisory e registra o PID da própria sessão do preparador
+                migratorJdbc.execute("SELECT pg_advisory_xact_lock(" + AdminLifecycleDbService.ADMIN_LIFECYCLE_LOCK_KEY + ")");
+                Integer pidAValue = migratorJdbc.queryForObject("SELECT pg_backend_pid()", Integer.class);
+                assertNotNull(pidAValue, "PID da sessão do preparador deve estar disponível");
                 pidA.set(pidAValue.longValue());
 
-                Long locksA = jdbcTemplate.queryForObject(
+                Long locksA = migratorJdbc.queryForObject(
                         """
                         SELECT count(*) FROM pg_locks
                         WHERE pid = ?
@@ -805,28 +854,25 @@ class UsuarioPerfilAdminIntegrationTest {
                         AdminLifecycleDbService.ADMIN_LIFECYCLE_LOCK_KEY
                 );
                 assertEquals(1L, locksA != null ? locksA : 0L,
-                        "A sessão de A deve ser a detentora do advisory lock");
+                        "A sessão do preparador deve ser a detentora do advisory lock");
 
                 lockAcquiredByALatch.countDown();
 
-                // Aguarda ADMIN B registrar o PID da própria sessão antes de tentar o lock
-                assertTrue(bPidCapturedLatch.await(5, TimeUnit.SECONDS), "Thread B deve registrar seu PID");
+                // O writer de ADMIN B vai aguardar o mesmo advisory lock.
 
-                // 2. Comprova via pg_locks que a sessão específica de ADMIN B (pidB) está bloqueada
+                // 2. Comprova via pg_locks que a chamada do writer de ADMIN B está bloqueada
                 boolean bBloqueado = false;
                 long deadline = System.currentTimeMillis() + 10000;
                 while (System.currentTimeMillis() < deadline) {
-                    Integer waiting = jdbcTemplate.queryForObject(
+                    Integer waiting = migratorJdbc.queryForObject(
                             """
                             SELECT count(*) FROM pg_locks
-                            WHERE pid = ?
-                              AND locktype = 'advisory'
+                            WHERE locktype = 'advisory'
                               AND ((classid::bigint << 32) | objid::bigint) = ?
                               AND objsubid = 1
                               AND NOT granted
                             """,
                             Integer.class,
-                            pidB.get(),
                             AdminLifecycleDbService.ADMIN_LIFECYCLE_LOCK_KEY
                     );
                     if (waiting != null && waiting > 0) {
@@ -836,18 +882,20 @@ class UsuarioPerfilAdminIntegrationTest {
                     Thread.sleep(50);
                 }
                 assertTrue(bBloqueado,
-                        "A sessão " + pidB.get() + " de ADMIN B deve estar bloqueada no advisory lock 7409395520021");
+                        "A chamada do writer de ADMIN B deve estar bloqueada no advisory lock 7409395520021");
 
-                // 3. ADMIN A rebaixa ADMIN B para CLIENTE
-                Usuario bDb = usuarioRepository.findById(adminB.getId()).orElseThrow();
-                bDb.setPerfil(Perfil.CLIENTE);
-                usuarioRepository.saveAndFlush(bDb);
+                // 3. Rebaixa ADMIN B para CLIENTE como arena_migrator, na mesma
+                // conexão que detém o lock (reentrância do trigger BEFORE UPDATE).
+                migratorJdbc.update(
+                        "UPDATE public.usuario SET perfil = 'CLIENTE' WHERE id = ?",
+                        adminB.getId()
+                );
 
-                // 4. ADMIN A confirma a transação (libera o lock no commit)
-                transactionManager.commit(status);
+                // 4. Confirma a transação (libera o lock no commit)
+                migratorTxManager.commit(status);
             } catch (Throwable ex) {
                 if (!status.isCompleted()) {
-                    transactionManager.rollback(status);
+                    migratorTxManager.rollback(status);
                 }
                 throw new RuntimeException(ex);
             }
@@ -856,16 +904,7 @@ class UsuarioPerfilAdminIntegrationTest {
         // Aguarda ADMIN A adquirir o lock primeiro
         assertTrue(lockAcquiredByALatch.await(5, TimeUnit.SECONDS), "Thread A deve adquirir o lock");
 
-        // O PID de B é capturado dentro do próprio adquirirLock(), na mesma transação
-        // e conexão do serviço. Isso identifica a sessão sem criar uma transação externa
-        // que poderia manter o operador em cache JPA antes da revalidação sob lock.
-        doAnswer(invocation -> {
-            Integer pidBValue = jdbcTemplate.queryForObject("SELECT pg_backend_pid()", Integer.class);
-            assertNotNull(pidBValue, "PID da sessão de B deve estar disponível");
-            pidB.set(pidBValue.longValue());
-            bPidCapturedLatch.countDown();
-            return invocation.callRealMethod();
-        }).when(adminLifecycleDbService).adquirirLock();
+        // A revalidação do ator agora acontece dentro da função do writer.
 
         // Thread de ADMIN B: tenta rebaixar ADMIN C para CLIENTE
         String tokenB = tokenPara(adminB);
@@ -884,11 +923,35 @@ class UsuarioPerfilAdminIntegrationTest {
             }
         });
 
-        futureA.get(15, TimeUnit.SECONDS);
-        futureB.get(15, TimeUnit.SECONDS);
-
-        executorA.shutdown();
-        executorB.shutdown();
+        try {
+            futureA.get(15, TimeUnit.SECONDS);
+            futureB.get(15, TimeUnit.SECONDS);
+        } finally {
+            if (futureA != null && !futureA.isDone()) {
+                futureA.cancel(true);
+            }
+            if (futureB != null && !futureB.isDone()) {
+                futureB.cancel(true);
+            }
+            executorA.shutdown();
+            executorB.shutdown();
+            try {
+                if (!executorA.awaitTermination(3, TimeUnit.SECONDS)) {
+                    executorA.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                executorA.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
+            try {
+                if (!executorB.awaitTermination(3, TimeUnit.SECONDS)) {
+                    executorB.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                executorB.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
+        }
 
         // 5. ADMIN B deve ser revalidado no banco e receber HTTP 403
         assertEquals(1, statusCodesB.size(), "Deve conter exatamente 1 status code de resposta");

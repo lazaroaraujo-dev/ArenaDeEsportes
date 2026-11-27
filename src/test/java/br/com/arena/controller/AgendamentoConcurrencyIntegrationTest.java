@@ -13,6 +13,8 @@ import br.com.arena.repository.UsuarioRepository;
 import br.com.arena.security.JwtService;
 import br.com.arena.service.AgendamentoExpirationService;
 import br.com.arena.testsupport.IsolatedPostgresIntegrationTest;
+import br.com.arena.testsupport.TestUsuarioFixture;
+import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -82,6 +84,11 @@ class AgendamentoConcurrencyIntegrationTest {
     @Autowired
     private DataSource dataSource;
 
+    @Autowired
+    private Flyway flyway;
+
+    private TestUsuarioFixture usuarioFixture;
+
     private Usuario proprietario;
     private Usuario outroCliente;
     private Usuario admin;
@@ -93,6 +100,7 @@ class AgendamentoConcurrencyIntegrationTest {
                 "arena_flyway_test",
                 jdbcTemplate.queryForObject("SELECT current_database()", String.class)
         );
+        usuarioFixture = new TestUsuarioFixture(usuarioRepository, flyway);
         proprietario = criarUsuario(Perfil.CLIENTE);
         outroCliente = criarUsuario(Perfil.CLIENTE);
         admin = criarUsuario(Perfil.ADMIN);
@@ -658,13 +666,14 @@ class AgendamentoConcurrencyIntegrationTest {
     }
 
     private Usuario criarUsuario(Perfil perfil) {
-        Usuario usuario = new Usuario();
-        usuario.setNome("Usuário concorrente " + UUID.randomUUID());
-        usuario.setEmail(UUID.randomUUID() + "@example.invalid");
-        usuario.setTelefone("11999999999");
-        usuario.setSenha("hash-de-teste");
-        usuario.setPerfil(perfil);
-        return usuarioRepository.saveAndFlush(usuario);
+        String email = UUID.randomUUID() + "@example.invalid";
+        String nome = "Usuário concorrente " + UUID.randomUUID();
+        if (perfil == Perfil.ADMIN) {
+            // arena_migrator prepara ADMIN; nunca via cadastro público nem runtime.
+            return usuarioFixture.criarAdmin(nome, email, "11999999999", "hash-de-teste");
+        }
+        // arena_runtime cria CLIENTE pela função h04_registrar_cliente(...).
+        return usuarioFixture.criarCliente(nome, email, "11999999999", "hash-de-teste");
     }
 
     private void definirIdadeEmMinutos(Agendamento agendamento, int minutos) {

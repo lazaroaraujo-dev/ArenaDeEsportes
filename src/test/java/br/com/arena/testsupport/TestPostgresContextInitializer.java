@@ -34,6 +34,12 @@ public class TestPostgresContextInitializer
         properties.put("spring.flyway.user", settings.migratorUsername());
         properties.put("spring.flyway.password", settings.migratorPassword());
         properties.put("spring.flyway.placeholders.h04InitialInstall", settings.h04InitialInstall());
+        properties.put("arena.admin-writer.url", settings.url());
+        properties.put("arena.admin-writer.username", settings.writerUsername());
+        properties.put("arena.admin-writer.password", settings.writerPassword());
+        properties.put("arena.admin-writer.maximum-pool-size", "2");
+        properties.put("arena.admin-writer.minimum-idle", "1");
+        properties.put("arena.admin-writer.connection-timeout-ms", "5000");
         properties.put("spring.jpa.hibernate.ddl-auto", "validate");
         properties.put("jwt.secret", settings.jwtSecret());
         properties.put(
